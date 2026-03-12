@@ -1,33 +1,32 @@
-from pathlib import Path
-from ia.ia_server import perguntar_ia
-
-PASTA_PROJETOS = Path("projetos_jarvis")
-PASTA_PROJETOS.mkdir(exist_ok=True)
+from executor.acoes_sistema import executar_acao_sistema
 
 
-def gerar_codigo(descricao):
+def executar(comando: dict):
 
-    prompt = f"""
-Gera código Python limpo e funcional.
+    intent = comando.get("intent")
+    entities = comando.get("entities", {})
 
-Descrição:
-{descricao}
+    # --------------------------------
+    # COMANDOS DE SISTEMA
+    # --------------------------------
 
-Responde apenas com código.
-"""
+    if intent == "COMANDO":
 
-    codigo = perguntar_ia(prompt)
+        acao = entities.get("acao")
 
-    return codigo
+        if acao:
 
+            return executar_acao_sistema(entities)
 
-def criar_script(nome, descricao):
+    # --------------------------------
+    # FACTUAL
+    # --------------------------------
 
-    codigo = gerar_codigo(descricao)
+    if intent == "FACTUAL":
+        return "Entendido."
 
-    caminho = PASTA_PROJETOS / f"{nome}.py"
+    # --------------------------------
+    # OUTROS
+    # --------------------------------
 
-    with open(caminho, "w", encoding="utf-8") as f:
-        f.write(codigo)
-
-    return caminho
+    return None

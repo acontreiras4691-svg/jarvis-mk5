@@ -7,137 +7,264 @@ import re
 from typing import Dict, Any
 
 from config.configuracoes import MODELO_RAPIDO
-from ia.llm_base import chamar_modelo  # função genérica para chamar Ollama
+from ia.llm_base import chamar_modelo
 
 
 # ==================================================
-# 🧹 Limpeza robusta de JSON (anti-markdown)
+# 🧹 Limpeza robusta de JSON
 # ==================================================
 
 def _extrair_json_bruto(texto: str) -> str:
-    """
-    Extrai apenas o conteúdo JSON válido mesmo que venha
-    envolvido em ```json ... ``` ou texto extra.
-    """
+
     if not texto:
         return "{}"
 
-    # Remove blocos markdown
     texto = texto.replace("```json", "").replace("```", "").strip()
 
-    # Extrai apenas o primeiro bloco { ... }
     match = re.search(r"\{.*\}", texto, re.DOTALL)
+
     return match.group(0) if match else "{}"
 
 
 # ==================================================
-# 🏎 Hard Routing mínimo (latência zero)
+# 🧹 Normalização STT
 # ==================================================
 
-def _hard_routing(texto: str) -> Dict[str, Any] | None:
-    texto_limpo = texto.lower().strip()
+def _normalizar(texto: str) -> str:
 
-    cumprimentos = ["olá", "ola", "bom dia", "boa tarde", "boa noite"]
-    despedidas = ["adeus", "até logo", "ate logo"]
+    texto = texto.lower().strip()
 
-    if texto_limpo in cumprimentos:
+    # remover acentos
+    texto = texto.replace("á", "a")
+    texto = texto.replace("à", "a")
+    texto = texto.replace("ã", "a")
+
+    texto = texto.replace("é", "e")
+    texto = texto.replace("ê", "e")
+
+    texto = texto.replace("í", "i")
+
+    texto = texto.replace("ó", "o")
+    texto = texto.replace("ô", "o")
+
+    texto = texto.replace("ú", "u")
+
+    # correções comuns STT
+    correcoes = {
+
+        "abdo": "abre",
+        "abri": "abre",
+        "abra": "abre",
+
+        "abre o": "abre",
+        "abre um": "abre",
+        "abrir o": "abre",
+
+        "abre youtube": "abre youtube",
+
+        "que horas sao": "hora",
+        "horas sao": "hora"
+    }
+
+    for erro, correto in correcoes.items():
+        texto = texto.replace(erro, correto)
+
+    return texto
+
+
+# ==================================================
+# ⚡ HARD ROUTING (super rápido)
+# ==================================================
+
+def _hard_routing(texto: str):
+
+    texto = _normalizar(texto)
+
+    # ------------------------------------------------
+    # CUMPRIMENTOS
+    # ------------------------------------------------
+
+    cumprimentos = [
+        "ola",
+        "bom dia",
+        "boa tarde",
+        "boa noite"
+    ]
+
+    if texto in cumprimentos:
+
         return {
             "intent": "FACTUAL",
-            "entities": {},
-            "confidence": 0.95,
+            "entities": {"tipo": "cumprimento"},
+            "confidence": 0.99,
             "risk_level": "LOW"
         }
 
-    if texto_limpo in despedidas:
+    # ------------------------------------------------
+    # HORA
+    # ------------------------------------------------
+
+    if "hora" in texto:
+
         return {
-            "intent": "FACTUAL",
-            "entities": {},
-            "confidence": 0.95,
+            "intent": "COMANDO",
+            "entities": {"acao": "hora"},
+            "confidence": 0.99,
             "risk_level": "LOW"
         }
 
-    # Frases muito curtas normalmente simples
-    if len(texto_limpo.split()) <= 2:
+    # ------------------------------------------------
+    # DATA
+    # ------------------------------------------------
+
+    if "dia" in texto or "data" in texto:
+
         return {
-            "intent": "FACTUAL",
-            "entities": {},
-            "confidence": 0.7,
+            "intent": "COMANDO",
+            "entities": {"acao": "data"},
+            "confidence": 0.99,
             "risk_level": "LOW"
+        }
+
+    # ------------------------------------------------
+    # YOUTUBE (qualquer frase)
+    # ------------------------------------------------
+
+    if "youtube" in texto:
+
+        return {
+            "intent": "COMANDO",
+            "entities": {
+                "acao": "abrir",
+                "app": "youtube"
+            },
+            "confidence": 0.97,
+            "risk_level": "LOW"
+        }
+
+    # ------------------------------------------------
+    # ABRIR PROGRAMAS
+    # ------------------------------------------------
+
+    if "abre" in texto or "abrir" in texto:
+
+        apps = [
+            "chrome",
+            "spotify",
+            "steam",
+            "calculadora",
+            "notepad",
+            "explorador"
+        ]
+
+        for app in apps:
+
+            if app in texto:
+
+                return {
+                    "intent": "COMANDO",
+                    "entities": {
+                        "acao": "abrir",
+                        "app": app
+                    },
+                    "confidence": 0.96,
+                    "risk_level": "LOW"
+                }
+
+    # ------------------------------------------------
+    # FECHAR PROGRAMAS
+    # ------------------------------------------------
+
+    if "fecha" in texto or "fechar" in texto:
+
+        apps = [
+            "chrome",
+            "spotify",
+            "steam",
+            "notepad"
+        ]
+
+        for app in apps:
+
+            if app in texto:
+
+                return {
+                    "intent": "COMANDO",
+                    "entities": {
+                        "acao": "fechar",
+                        "app": app
+                    },
+                    "confidence": 0.96,
+                    "risk_level": "LOW"
+                }
+
+    # ------------------------------------------------
+    # DESLIGAR PC
+    # ------------------------------------------------
+
+    if "desligar" in texto or "desliga" in texto:
+
+        return {
+            "intent": "COMANDO",
+            "entities": {"acao": "shutdown"},
+            "confidence": 0.9,
+            "risk_level": "HIGH"
         }
 
     return None
 
 
 # ==================================================
-# 🧠 Router MK4 Principal
+# 🧠 Router MK4 principal
 # ==================================================
 
 def analisar_intencao(texto: str) -> Dict[str, Any]:
-    """
-    Classifica intenção, extrai entidades,
-    calcula confiança e nível de risco.
-    """
 
-    # 🔹 1. Tentar hard routing primeiro
+    # HARD ROUTING
     hard = _hard_routing(texto)
+
     if hard:
         return hard
 
-    # 🔹 2. Chamada ao modelo rápido
+    # ------------------------------------------------
+    # LLM (fallback inteligente)
+    # ------------------------------------------------
+
     mensagens = [
+
         {
             "role": "system",
             "content": """
-You are an advanced intent classifier and entity extractor.
+You are an intent classifier.
 
-Return ONLY valid JSON.
+Return ONLY JSON.
 
 Format:
 
 {
-  "intent": "COMANDO | FACTUAL | RACIOCINIO | PLANEAMENTO | MEMORIA",
-  "entities": { extract ALL explicitly mentioned entities },
-  "confidence": 0.0-1.0,
-  "risk_level": "LOW | MEDIUM | HIGH"
+"intent":"COMANDO|FACTUAL|RACIOCINIO|PLANEAMENTO|MEMORIA",
+"entities":{},
+"confidence":0.0-1.0,
+"risk_level":"LOW|MEDIUM|HIGH"
 }
-
-Rules:
-
-COMANDO:
-- system actions, execution requests.
-
-FACTUAL:
-- simple questions or greetings.
-
-RACIOCINIO:
-- explanations, deep thinking.
-
-PLANEAMENTO:
-- strategic guidance, learning plans, structured tasks.
-
-MEMORIA:
-- storing or recalling information.
-
-Risk level:
-- HIGH: deletion, system change, critical modification.
-- MEDIUM: file/state change.
-- LOW: normal explanation or chat.
-
-Confidence:
-- Estimate classification certainty.
 """
         },
-        {"role": "user", "content": texto}
+
+        {
+            "role": "user",
+            "content": texto
+        }
+
     ]
 
     resposta = chamar_modelo(MODELO_RAPIDO, mensagens)
 
-    # 🔹 3. Tentar parse seguro
     try:
+
         json_limpo = _extrair_json_bruto(resposta)
+
         dados = json.loads(json_limpo)
 
-        # Garantir campos mínimos
         return {
             "intent": dados.get("intent", "RACIOCINIO"),
             "entities": dados.get("entities", {}),
@@ -146,7 +273,7 @@ Confidence:
         }
 
     except Exception:
-        # 🔹 4. Fallback inteligente
+
         return {
             "intent": "RACIOCINIO",
             "entities": {},

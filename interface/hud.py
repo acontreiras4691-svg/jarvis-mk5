@@ -1,6 +1,7 @@
 import math
 import random
 import psutil
+import time
 
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QRadialGradient
@@ -14,8 +15,8 @@ class JarvisHUD(QWidget):
 
         self.audio_manager = audio_manager
 
-        # posição ideal para 2560x1440
-        self.setGeometry(430, 180, 1700, 1000)
+        # FULLSCREEN
+        self.showFullScreen()
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
@@ -27,33 +28,34 @@ class JarvisHUD(QWidget):
         self.estado = "IDLE"
         self.texto = "Jarvis online."
 
+        # animações
         self.rot1 = 0
         self.rot2 = 0
         self.rot3 = 0
         self.rot4 = 0
 
         self.audio_level = 0
-        self.expansao = 0
 
-        # olhos
-        self.blink_timer = 0
-        self.blink_state = 1
+        # rede
+        self.last_net = psutil.net_io_counters()
+        self.last_time = time.time()
+        self.net_down = 0
+        self.net_up = 0
 
         # partículas
         self.particles = []
-
-        for _ in range(100):
+        for _ in range(150):
             self.particles.append([
-                random.uniform(-350, 350),
-                random.uniform(-350, 350),
-                random.uniform(0.5, 1.5)
+                random.uniform(-700, 700),
+                random.uniform(-700, 700),
+                random.uniform(0.3, 1.5)
             ])
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(16)
 
-    # -------------------------
+    # ---------------------------------
 
     def set_estado(self, estado):
         self.estado = estado
@@ -61,16 +63,33 @@ class JarvisHUD(QWidget):
     def set_texto(self, texto):
         self.texto = texto
 
-    # -------------------------
+    # ---------------------------------
+
+    def update_network(self):
+
+        now = time.time()
+        net = psutil.net_io_counters()
+
+        dt = now - self.last_time
+
+        if dt <= 0:
+            return
+
+        self.net_down = (net.bytes_recv - self.last_net.bytes_recv) / dt / 1024
+        self.net_up = (net.bytes_sent - self.last_net.bytes_sent) / dt / 1024
+
+        self.last_net = net
+        self.last_time = now
+
+    # ---------------------------------
 
     def update_frame(self):
 
-        self.rot1 += 0.6
-        self.rot2 -= 1.2
-        self.rot3 += 1.8
+        self.rot1 += 0.4
+        self.rot2 -= 1.0
+        self.rot3 += 1.3
         self.rot4 += 3
 
-        # nível de áudio
         try:
             level = self.audio_manager.get_audio_level()
         except:
@@ -78,25 +97,25 @@ class JarvisHUD(QWidget):
 
         self.audio_level = self.audio_level * 0.85 + level * 0.15
 
-        # expansão quando fala
-        if self.estado == "RESPONDENDO":
-            self.expansao = self.expansao * 0.9 + 1 * 0.1
-        else:
-            self.expansao = self.expansao * 0.9
-
-        # piscar olhos
-        self.blink_timer += 1
-
-        if self.blink_timer > 180:
-            self.blink_state = 0
-
-        if self.blink_timer > 195:
-            self.blink_state = 1
-            self.blink_timer = 0
+        self.update_network()
 
         self.update()
 
-    # -------------------------
+    # ---------------------------------
+
+    def draw_bar(self, painter, x, y, width, percent):
+
+        fill = int(width * percent / 100)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        painter.setBrush(QColor(0, 230, 255, 200))
+        painter.drawRect(x, y, fill, 12)
+
+        painter.setBrush(QColor(0, 80, 100, 120))
+        painter.drawRect(x + fill, y, width - fill, 12)
+
+    # ---------------------------------
 
     def paintEvent(self, event):
 
@@ -106,11 +125,9 @@ class JarvisHUD(QWidget):
         cx = int(self.width() / 2)
         cy = int(self.height() / 2)
 
-        base_radius = 150
+        radius = 220 + int(self.audio_level * 150)
 
-        radius = int(base_radius + self.audio_level * 100 + self.expansao * 60)
-
-        azul = QColor(0, 200, 255)
+        azul = QColor(0, 230, 255)
         laranja = QColor(255, 170, 0)
 
         cor = azul
@@ -125,7 +142,7 @@ class JarvisHUD(QWidget):
         # GLOW
         # -------------------------
 
-        glow = QRadialGradient(cx, cy, radius + 300)
+        glow = QRadialGradient(cx, cy, radius + 500)
 
         glow.setColorAt(0, QColor(cor.red(), cor.green(), cor.blue(), 120))
         glow.setColorAt(1, QColor(0, 0, 0, 0))
@@ -134,10 +151,10 @@ class JarvisHUD(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
 
         painter.drawEllipse(
-            int(cx - radius - 120),
-            int(cy - radius - 120),
-            int((radius + 120) * 2),
-            int((radius + 120) * 2)
+            cx - radius - 300,
+            cy - radius - 300,
+            (radius + 300) * 2,
+            (radius + 300) * 2
         )
 
         # -------------------------
@@ -149,14 +166,15 @@ class JarvisHUD(QWidget):
 
         pen = QPen(QColor(0, 255, 255, 120))
         pen.setWidth(2)
+
         painter.setPen(pen)
 
         for p in self.particles:
 
             p[1] -= p[2]
 
-            if p[1] < -450:
-                p[1] = 450
+            if p[1] < -900:
+                p[1] = 900
 
             painter.drawPoint(int(p[0]), int(p[1]))
 
@@ -170,21 +188,22 @@ class JarvisHUD(QWidget):
         painter.translate(cx, cy)
         painter.rotate(self.rot1)
 
-        pen = QPen(azul)
+        pen = QPen(QColor(0, 220, 255))
         pen.setWidth(3)
+
         painter.setPen(pen)
 
-        r = radius + 90
+        r = radius + 160
 
-        for i in range(40):
+        for i in range(80):
 
-            ang = math.radians(i * 9)
+            ang = math.radians(i * 4.5)
 
             x1 = math.cos(ang) * r
             y1 = math.sin(ang) * r
 
-            x2 = math.cos(ang) * (r + 14)
-            y2 = math.sin(ang) * (r + 14)
+            x2 = math.cos(ang) * (r + 20)
+            y2 = math.sin(ang) * (r + 20)
 
             painter.drawLine(int(x1), int(y1), int(x2), int(y2))
 
@@ -198,18 +217,14 @@ class JarvisHUD(QWidget):
         painter.translate(cx, cy)
         painter.rotate(self.rot2)
 
-        pen2 = QPen(QColor(0, 220, 255))
-        pen2.setWidth(2)
-        painter.setPen(pen2)
+        pen = QPen(QColor(0, 255, 220))
+        pen.setWidth(2)
 
-        mid = radius + 40
+        painter.setPen(pen)
 
-        painter.drawEllipse(
-            int(-mid),
-            int(-mid),
-            int(mid * 2),
-            int(mid * 2)
-        )
+        mid = radius + 90
+
+        painter.drawEllipse(-mid, -mid, mid * 2, mid * 2)
 
         painter.restore()
 
@@ -221,100 +236,40 @@ class JarvisHUD(QWidget):
         painter.translate(cx, cy)
         painter.rotate(self.rot4)
 
-        radar_pen = QPen(QColor(0, 255, 255, 160))
+        radar_pen = QPen(QColor(0, 255, 255, 200))
         radar_pen.setWidth(3)
+
         painter.setPen(radar_pen)
 
-        painter.drawLine(0, 0, int(radius + 120), 0)
+        painter.drawLine(0, 0, radius + 200, 0)
 
         painter.restore()
 
         # -------------------------
-        # ANEL INTERNO
+        # CORE
         # -------------------------
 
-        painter.save()
-        painter.translate(cx, cy)
-        painter.rotate(self.rot3)
+        core_r = 100
 
-        pen3 = QPen(QColor(0, 255, 200))
-        pen3.setWidth(3)
-        painter.setPen(pen3)
+        core = QRadialGradient(cx, cy, core_r)
 
-        inner = radius - 60
-
-        painter.drawEllipse(
-            int(-inner),
-            int(-inner),
-            int(inner * 2),
-            int(inner * 2)
-        )
-
-        painter.restore()
-
-        # -------------------------
-        # ARC REACTOR
-        # -------------------------
-
-        core_radius = 60
-
-        core = QRadialGradient(cx, cy, core_radius)
-        core.setColorAt(0, QColor(255, 200, 100))
+        core.setColorAt(0, QColor(255, 230, 140))
         core.setColorAt(1, QColor(255, 120, 0))
 
         painter.setBrush(core)
         painter.setPen(Qt.PenStyle.NoPen)
 
-        painter.drawEllipse(
-            int(cx - core_radius),
-            int(cy - core_radius),
-            int(core_radius * 2),
-            int(core_radius * 2)
-        )
+        painter.drawEllipse(cx - core_r, cy - core_r, core_r * 2, core_r * 2)
 
         # -------------------------
-        # AVATAR
-        # -------------------------
-
-        painter.setPen(QPen(QColor(0, 255, 255), 5))
-
-        olho_offset = 50
-
-        eye_height = 16 if self.blink_state else 2
-
-        painter.drawEllipse(int(cx - olho_offset - 8), int(cy - 20), 16, eye_height)
-        painter.drawEllipse(int(cx + olho_offset - 8), int(cy - 20), 16, eye_height)
-
-        painter.drawLine(int(cx - 18), int(cy + 35), int(cx + 18), int(cy + 35))
-
-        # -------------------------
-        # ONDAS DE VOZ
-        # -------------------------
-
-        wave_pen = QPen(QColor(255, 170, 0, 140))
-        wave_pen.setWidth(2)
-        painter.setPen(wave_pen)
-
-        for i in range(3):
-
-            r = radius + 150 + i * 40 + self.audio_level * 100
-
-            painter.drawEllipse(
-                int(cx - r),
-                int(cy - r),
-                int(r * 2),
-                int(r * 2)
-            )
-
-        # -------------------------
-        # TEXTO
+        # TEXTO CENTRAL
         # -------------------------
 
         painter.setPen(QColor(220, 255, 255))
-        painter.setFont(QFont("Orbitron", 18))
+        painter.setFont(QFont("Orbitron", 24))
 
         painter.drawText(
-            self.rect().adjusted(300, 240, -300, -240),
+            self.rect().adjusted(400, 300, -400, -300),
             Qt.AlignmentFlag.AlignCenter |
             Qt.TextFlag.TextWordWrap,
             self.texto
@@ -324,23 +279,51 @@ class JarvisHUD(QWidget):
         # PAINEL ESQUERDO
         # -------------------------
 
-        painter.setFont(QFont("Consolas", 12))
+        painter.setFont(QFont("Consolas", 14))
         painter.setPen(QColor(0, 255, 255))
 
         cpu = psutil.cpu_percent()
         ram = psutil.virtual_memory().percent
 
-        painter.drawText(40, 120, f"CPU: {cpu}%")
-        painter.drawText(40, 150, f"RAM: {ram}%")
-        painter.drawText(40, 180, f"STATE: {self.estado}")
+        x = 80
+        y = 160
+
+        painter.drawText(x, y, "CPU")
+        self.draw_bar(painter, x, y + 15, 220, cpu)
+
+        painter.drawText(x, y + 60, "RAM")
+        self.draw_bar(painter, x, y + 75, 220, ram)
+
+        painter.drawText(x, y + 140, f"STATE: {self.estado}")
 
         # -------------------------
         # PAINEL DIREITO
         # -------------------------
 
-        painter.drawText(self.width() - 260, 120, "JARVIS AI")
-        painter.drawText(self.width() - 260, 150, "Neural Core: ONLINE")
-        painter.drawText(self.width() - 260, 180, "Voice Engine: ACTIVE")
+        rx = self.width() - 380
+
+        painter.drawText(rx, 160, "JARVIS AI")
+        painter.drawText(rx, 200, "Neural Core: ONLINE")
+        painter.drawText(rx, 230, "Voice Engine: ACTIVE")
+
+        painter.drawText(rx, 300, f"NET ↓ {self.net_down:.1f} KB/s")
+        painter.drawText(rx, 330, f"NET ↑ {self.net_up:.1f} KB/s")
+
+        # -------------------------
+        # VISUALIZADOR VOZ
+        # -------------------------
+
+        painter.setPen(QPen(QColor(255, 170, 0, 200), 4))
+
+        base_y = cy + 350
+
+        for i in range(60):
+
+            h = random.randint(5, int(50 + self.audio_level * 200))
+
+            x = cx - 600 + i * 20
+
+            painter.drawLine(x, base_y, x, base_y - h)
 
 
 def iniciar_hud(audio_manager):

@@ -1,5 +1,5 @@
 # ==================================================
-# 🎯 INTENT ROUTER - JARVIS MK5
+# 🎯 INTENT ROUTER - JARVIS MK5 (IMPROVED)
 # ==================================================
 
 import datetime
@@ -19,7 +19,7 @@ def route_intent(texto):
     # HORAS
     # ---------------------------------------------
 
-    if "horas" in texto:
+    if "hora" in texto:
 
         return {
             "type": "command",
@@ -119,12 +119,20 @@ def route_intent(texto):
 def normalizar(texto):
 
     correcoes = {
+
         "abadi": "abre",
         "breed": "abre",
         "abri": "abre",
-        "abrir o": "abre",
+
         "abre o": "abre",
-        "abra o": "abre"
+        "abrir o": "abre",
+        "abra o": "abre",
+
+        "abre um": "abre",
+        "abrir um": "abre",
+
+        "horas sao": "hora",
+        "que horas sao": "hora"
     }
 
     for erro, correto in correcoes.items():

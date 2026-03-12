@@ -1,5 +1,5 @@
 # ==================================================
-# 🧠 BRAIN ENGINE - JARVIS MK5
+# 🧠 BRAIN ENGINE - JARVIS MK5 (FIXED)
 # ==================================================
 
 from brain.intent_router import route_intent
@@ -20,19 +20,37 @@ class BrainEngine:
 
         try:
 
-            intent = route_intent(texto)
+            resultado = route_intent(texto)
 
-            if intent["type"] == "command":
+            intent = resultado.get("intent")
+            entities = resultado.get("entities", {})
 
-                acao = intent["action"]
+            # -------------------------
+            # COMANDO
+            # -------------------------
 
-                resposta = acao(texto)
+            if intent == "COMANDO":
+
+                resposta = executar({
+                    "intent": intent,
+                    "entities": entities
+                })
 
                 return resposta
 
-            if intent["type"] == "chat":
+            # -------------------------
+            # FACTUAL
+            # -------------------------
+
+            if intent == "FACTUAL":
 
                 return None
+
+            # -------------------------
+            # CHAT / RACIOCINIO
+            # -------------------------
+
+            return None
 
         except Exception as e:
 
