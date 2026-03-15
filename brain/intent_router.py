@@ -40,6 +40,8 @@ class IntentRouter:
             "londres",
             "franca",
             "frança",
+            "espanha",
+            "madrid",
             "paris",
         ]
 
@@ -85,6 +87,44 @@ class IntentRouter:
                     "tomorrow": tomorrow,
                 },
                 "confidence": 0.98,
+            }
+
+        # ---------------------------------------------
+        # BRILHO / INTENSIDADE
+        # ---------------------------------------------
+
+        if self.is_brightness_command(texto):
+            brightness = self.extract_brightness(texto)
+            local = self.extract_smart_location(texto)
+
+            return {
+                "type": "command",
+                "intent": "smart_home.light_set_brightness",
+                "entities": {
+                    "location": local,
+                    "device_type": "light",
+                    "brightness": brightness,
+                },
+                "confidence": 0.93,
+            }
+
+        # ---------------------------------------------
+        # TEMPORIZADOR / DELAY OFF
+        # ---------------------------------------------
+
+        if self.is_timer_off_command(texto):
+            minutes = self.extract_minutes(texto)
+            local = self.extract_smart_location(texto)
+
+            return {
+                "type": "command",
+                "intent": "smart_home.light_off_timer",
+                "entities": {
+                    "location": local,
+                    "device_type": "light",
+                    "minutes": minutes,
+                },
+                "confidence": 0.92,
             }
 
         # ---------------------------------------------
@@ -338,6 +378,66 @@ class IntentRouter:
             ],
         )
 
+    def is_brightness_command(self, texto: str) -> bool:
+        return self.match_any(
+            texto,
+            [
+                r"\bbaixa\b",
+                r"\baumenta\b",
+                r"\bmete para\b",
+                r"\bpoe para\b",
+                r"\bpõe para\b",
+                r"\bmetade\b",
+                r"\bbrilho\b",
+                r"\bintensidade\b",
+            ],
+        )
+
+    def is_timer_off_command(self, texto: str) -> bool:
+        return self.match_any(
+            texto,
+            [
+                r"\bapaga daqui a\b",
+                r"\bdesliga daqui a\b",
+                r"\bapaga em\b",
+                r"\bdesliga em\b",
+            ],
+        )
+
+    def extract_brightness(self, texto: str):
+        if "metade" in texto:
+            return 50
+
+        match = re.search(r"(\d{1,3})\s*%", texto)
+        if match:
+            value = int(match.group(1))
+            return max(0, min(100, value))
+
+        if "minimo" in texto or "mínimo" in texto:
+            return 10
+
+        if "maximo" in texto or "máximo" in texto:
+            return 100
+
+        if "baixa" in texto:
+            return 50
+
+        if "aumenta" in texto:
+            return 80
+
+        return None
+
+    def extract_minutes(self, texto: str):
+        match = re.search(r"(\d+)\s*min", texto)
+        if match:
+            return int(match.group(1))
+
+        match = re.search(r"(\d+)\s*minutos", texto)
+        if match:
+            return int(match.group(1))
+
+        return None
+
     def extract_app(self, texto: str):
         for app, aliases in self.apps.items():
             for alias in aliases:
@@ -352,6 +452,8 @@ class IntentRouter:
             if location_norm in texto:
                 if location_norm == "escritorio":
                     return "escritório"
+                if location_norm == "casa de banho":
+                    return "wc"
                 return location_norm
         return None
 

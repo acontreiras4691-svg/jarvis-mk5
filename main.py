@@ -94,28 +94,16 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
-    # ------------------------------------------------
-    # AUDIO
-    # ------------------------------------------------
-
     audio_manager = AudioManager()
 
     for d in audio_manager.listar_dispositivos():
         if d["maxInputChannels"] > 0:
             log(f"MIC -> index={d['index']} | name={d['name']}")
 
-    # ------------------------------------------------
-    # HUD
-    # ------------------------------------------------
-
     hud = iniciar_hud(audio_manager)
     hud.show()
     hud.set_texto("A carregar sistemas...")
     hud.set_estado("PROCESSANDO")
-
-    # ------------------------------------------------
-    # MÓDULOS
-    # ------------------------------------------------
 
     try:
         wake_engine = WakeWordEngine(audio_manager)
@@ -148,10 +136,6 @@ def main():
     hud.set_texto("Jarvis MK5 online.")
     hud.set_estado("IDLE")
 
-    # ------------------------------------------------
-    # FLAGS
-    # ------------------------------------------------
-
     app.stt_worker = None
     app.server_worker = None
 
@@ -162,6 +146,7 @@ def main():
     app.conversa_ate = 0.0
     app.followup_retries = 0
     app.next_stt_time = 0.0
+    app.force_end_conversation = False
 
     last_wake_time = 0
     ultimo_log_wake = 0
@@ -196,6 +181,7 @@ def main():
     def resetar_para_idle():
         app.jarvis_ocupado = False
         app.stt_ativo = False
+        app.force_end_conversation = False
         limpar_agendamento_stt()
         desativar_modo_conversa()
         hud.set_estado("IDLE")
@@ -233,7 +219,10 @@ def main():
         app.jarvis_ocupado = False
         app.stt_ativo = False
 
-        # renova sempre a conversa no fim de cada resposta
+        if app.force_end_conversation:
+            resetar_para_idle()
+            return
+
         ativar_modo_conversa()
 
         hud.set_estado("OUVINDO")
@@ -313,7 +302,8 @@ def main():
         hud.set_estado("RESPONDENDO")
         hud.set_texto(msg)
 
-        tts.on_end_speak = resetar_para_idle
+        app.force_end_conversation = True
+        tts.on_end_speak = finalizar_resposta
         tts.falar(msg)
 
     # ==================================================
@@ -338,19 +328,28 @@ def main():
                 resetar_para_idle()
                 return
 
-            # fala válida -> renova a janela de conversa
             ativar_modo_conversa()
             app.followup_retries = 0
 
             texto_original = corrigir_texto_stt(texto.strip())
             log(f"🎤 STT: {texto_original}")
 
-            resposta_comando = brain.processar(texto_original)
+            resposta_brain = brain.processar(texto_original)
 
-            if resposta_comando:
-                responder_localmente(resposta_comando)
+            if resposta_brain:
+                if isinstance(resposta_brain, dict):
+                    resposta_texto = resposta_brain.get("text", "")
+                    app.force_end_conversation = bool(
+                        resposta_brain.get("end_conversation", False)
+                    )
+                else:
+                    resposta_texto = str(resposta_brain)
+                    app.force_end_conversation = False
+
+                responder_localmente(resposta_texto)
                 return
 
+            app.force_end_conversation = False
             perguntar_servidor_async(texto_original)
 
         except Exception as e:
@@ -368,10 +367,6 @@ def main():
             if app.stt_ativo or app.jarvis_ocupado:
                 return
 
-            # ------------------------------------------
-            # STT AGENDADO (WAKEWORD E FOLLOW-UP)
-            # ------------------------------------------
-
             if (
                 app.next_stt_time > 0
                 and time.time() >= app.next_stt_time
@@ -380,19 +375,11 @@ def main():
                 iniciar_stt()
                 return
 
-            # ------------------------------------------
-            # FOLLOW-UP CONTROLADO
-            # ------------------------------------------
-
             if app.modo_conversa:
                 if time.time() >= app.conversa_ate:
                     resetar_para_idle()
                     return
                 return
-
-            # ------------------------------------------
-            # WAKEWORD NORMAL
-            # ------------------------------------------
 
             if DEBUG_WAKEWORD:
                 agora_log = time.time()
@@ -433,14 +420,11 @@ def main():
 
                 desativar_modo_conversa()
                 app.followup_retries = 0
+                app.force_end_conversation = False
                 agendar_stt(INITIAL_STT_DELAY)
 
         except Exception as e:
             log(f"❌ ERRO ciclo: {e}")
-
-    # ==================================================
-    # TIMER
-    # ==================================================
 
     app.timer = QTimer()
     app.timer.timeout.connect(ciclo)
@@ -450,10 +434,6 @@ def main():
 
     sys.exit(app.exec())
 
-
-# ==================================================
-# START
-# ==================================================
 
 if __name__ == "__main__":
     main()
