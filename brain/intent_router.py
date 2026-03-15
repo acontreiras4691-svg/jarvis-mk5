@@ -9,7 +9,6 @@ import unicodedata
 class IntentRouter:
 
     def __init__(self):
-
         self.apps = {
             "youtube": ["youtube", "you tube"],
             "chrome": ["chrome", "google chrome", "navegador"],
@@ -49,7 +48,6 @@ class IntentRouter:
     # ==================================================
 
     def route_intent(self, texto: str) -> dict:
-
         texto_original = texto.strip()
         texto = self.normalizar(texto_original)
 
@@ -59,12 +57,14 @@ class IntentRouter:
 
         if self.is_time_question(texto):
             local = self.extract_world_location(texto)
+            tomorrow = "amanha" in texto
 
             return {
                 "type": "command",
                 "intent": "assistant.time",
                 "entities": {
-                    "location": local
+                    "location": local,
+                    "tomorrow": tomorrow,
                 },
                 "confidence": 0.98,
             }
@@ -75,12 +75,14 @@ class IntentRouter:
 
         if self.is_date_question(texto):
             local = self.extract_world_location(texto)
+            tomorrow = "amanha" in texto
 
             return {
                 "type": "command",
                 "intent": "assistant.date",
                 "entities": {
-                    "location": local
+                    "location": local,
+                    "tomorrow": tomorrow,
                 },
                 "confidence": 0.98,
             }
@@ -137,19 +139,16 @@ class IntentRouter:
 
         if self.is_open_command(texto):
             app = self.extract_app(texto)
-
             if app:
                 return {
                     "type": "command",
                     "intent": "system.open_app",
-                    "entities": {
-                        "app": app
-                    },
+                    "entities": {"app": app},
                     "confidence": 0.95,
                 }
 
         # ---------------------------------------------
-        # SMART HOME - LIGAR LUZ
+        # SMART HOME - LUZ ON
         # ---------------------------------------------
 
         if self.match_any(
@@ -163,7 +162,6 @@ class IntentRouter:
             ],
         ):
             local = self.extract_smart_location(texto)
-
             return {
                 "type": "command",
                 "intent": "smart_home.light_on",
@@ -176,7 +174,7 @@ class IntentRouter:
             }
 
         # ---------------------------------------------
-        # SMART HOME - DESLIGAR LUZ
+        # SMART HOME - LUZ OFF
         # ---------------------------------------------
 
         if self.match_any(
@@ -189,7 +187,6 @@ class IntentRouter:
             ],
         ):
             local = self.extract_smart_location(texto)
-
             return {
                 "type": "command",
                 "intent": "smart_home.light_off",
@@ -202,7 +199,7 @@ class IntentRouter:
             }
 
         # ---------------------------------------------
-        # SMART HOME - LIGAR TOMADA
+        # SMART HOME - TOMADA ON
         # ---------------------------------------------
 
         if self.match_any(
@@ -215,7 +212,6 @@ class IntentRouter:
             ],
         ):
             local = self.extract_smart_location(texto)
-
             return {
                 "type": "command",
                 "intent": "smart_home.plug_on",
@@ -228,7 +224,7 @@ class IntentRouter:
             }
 
         # ---------------------------------------------
-        # SMART HOME - DESLIGAR TOMADA
+        # SMART HOME - TOMADA OFF
         # ---------------------------------------------
 
         if self.match_any(
@@ -241,7 +237,6 @@ class IntentRouter:
             ],
         ):
             local = self.extract_smart_location(texto)
-
             return {
                 "type": "command",
                 "intent": "smart_home.plug_off",
@@ -254,7 +249,7 @@ class IntentRouter:
             }
 
         # ---------------------------------------------
-        # CHAT / FALLBACK
+        # CHAT
         # ---------------------------------------------
 
         return {
@@ -266,7 +261,7 @@ class IntentRouter:
         }
 
     # ==================================================
-    # NORMALIZAÇÃO
+    # NORMALIZAR
     # ==================================================
 
     def normalizar(self, texto: str) -> str:
@@ -286,12 +281,10 @@ class IntentRouter:
             "abrir o": "abre",
             "abre um": "abre",
             "abrir um": "abre",
-            "que horas sao": "que horas sao",
-            "horas sao": "horas",
-            "suica": "suica",
             "suíça": "suica",
             "frança": "franca",
             "escritório": "escritorio",
+            "amanhã": "amanha",
         }
 
         for erro, correto in correcoes.items():
@@ -319,8 +312,6 @@ class IntentRouter:
                 r"\binicia\b",
                 r"\blanca\b",
                 r"\blança\b",
-                r"\blanca o\b",
-                r"\blança o\b",
             ],
         )
 
@@ -329,9 +320,8 @@ class IntentRouter:
             texto,
             [
                 r"\bque horas sao\b",
-                r"\bhoras\b",
                 r"\bhora\b",
-                r"\bque horas e\b",
+                r"\bhoras\b",
             ],
         )
 
@@ -341,10 +331,10 @@ class IntentRouter:
             [
                 r"\bque dia e hoje\b",
                 r"\bque dia e\b",
-                r"\bdata\b",
-                r"\bdia de hoje\b",
                 r"\bque data e hoje\b",
                 r"\bque data e\b",
+                r"\bdata\b",
+                r"\bdia de hoje\b",
             ],
         )
 
@@ -369,7 +359,5 @@ class IntentRouter:
         for location in self.world_locations:
             location_norm = self.normalizar(location)
             if location_norm in texto:
-                if location_norm == "suica":
-                    return "portugal" if False else "suica"
                 return location_norm
         return None

@@ -1,5 +1,5 @@
 # ==================================================
-# STT WORKER (THREAD SEGURA PARA QT)
+# STT WORKER (THREAD SEGURA)
 # ==================================================
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -13,10 +13,6 @@ class STTWorker(QThread):
         super().__init__()
         self.stt = stt
         self.running = True
-
-    # ==================================================
-    # THREAD
-    # ==================================================
 
     def run(self):
         if not self.running:
@@ -35,10 +31,6 @@ class STTWorker(QThread):
 
         except Exception:
             self.resultado.emit("")
-
-    # ==================================================
-    # PARAR THREAD
-    # ==================================================
 
     def stop(self):
         self.running = False

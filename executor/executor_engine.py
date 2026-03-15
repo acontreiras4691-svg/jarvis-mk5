@@ -5,7 +5,11 @@
 import datetime
 import webbrowser
 import subprocess
-from zoneinfo import ZoneInfo
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None
 
 
 class Executor:
@@ -24,7 +28,7 @@ class Executor:
         return f"Hoje é dia {dt.day} do mês {dt.month} de {dt.year}."
 
     def _resolver_timezone(self, local: str | None):
-        if not local:
+        if not local or ZoneInfo is None:
             return None
 
         local = local.lower().strip()
@@ -35,32 +39,30 @@ class Executor:
             "porto": "Europe/Lisbon",
 
             "suica": "Europe/Zurich",
-            "suíça": "Europe/Zurich",
-            "switzerland": "Europe/Zurich",
-            "zurique": "Europe/Zurich",
             "lausanne": "Europe/Zurich",
+            "zurique": "Europe/Zurich",
 
             "reino unido": "Europe/London",
             "londres": "Europe/London",
 
             "franca": "Europe/Paris",
-            "frança": "Europe/Paris",
             "paris": "Europe/Paris",
         }
 
         tz_name = mapa.get(local)
-
         if not tz_name:
             return None
 
-        return ZoneInfo(tz_name)
+        try:
+            return ZoneInfo(tz_name)
+        except Exception:
+            return None
 
     # ------------------------------------------------
     # EXECUTAR
     # ------------------------------------------------
 
     def executar(self, intent_data):
-
         intent = intent_data.get("intent")
         entities = intent_data.get("entities", {}) or {}
 
@@ -69,19 +71,18 @@ class Executor:
         # ---------------------------------------------
 
         if intent == "assistant.time":
-
             local = entities.get("location")
             tz = self._resolver_timezone(local)
 
             if tz:
                 agora = datetime.datetime.now(tz)
-
-                if local:
-                    return f"Em {local}, {self._formatar_hora(agora).lower()}"
-
-                return self._formatar_hora(agora)
+                return f"Em {local}, são {agora.hour} horas e {agora.minute:02d} minutos."
 
             agora = datetime.datetime.now()
+
+            if local:
+                return f"Não consegui carregar o fuso horário de {local}, Dudu."
+
             return self._formatar_hora(agora)
 
         # ---------------------------------------------
@@ -89,19 +90,18 @@ class Executor:
         # ---------------------------------------------
 
         if intent == "assistant.date":
-
             local = entities.get("location")
             tz = self._resolver_timezone(local)
 
             if tz:
-                agora = datetime.datetime.now(tz)
-
-                if local:
-                    return f"Em {local}, {self._formatar_data(agora).lower()}"
-
-                return self._formatar_data(agora)
+                hoje = datetime.datetime.now(tz)
+                return f"Em {local}, hoje é dia {hoje.day} do mês {hoje.month} de {hoje.year}."
 
             hoje = datetime.datetime.now()
+
+            if local:
+                return f"Não consegui carregar a data local de {local}, Dudu."
+
             return self._formatar_data(hoje)
 
         # ---------------------------------------------
@@ -109,7 +109,6 @@ class Executor:
         # ---------------------------------------------
 
         if intent == "system.open_app":
-
             app = entities.get("app")
 
             if app == "youtube":
@@ -135,39 +134,59 @@ class Executor:
             return "Não encontrei essa aplicação."
 
         # ---------------------------------------------
-        # SMART HOME
+        # SMART HOME - LUZ ON
         # ---------------------------------------------
 
         if intent == "smart_home.light_on":
+            location = entities.get("location")
 
             if not self.smart_home:
-                return "O sistema de luzes ainda não está ligado."
+                if location:
+                    return f"Luz ligada em {location}. Sistema smart home ainda em modo simulado."
+                return "Luz ligada. Sistema smart home ainda em modo simulado."
 
-            location = entities.get("location")
             return self.smart_home.controlar_luz(location=location, action="turn_on")
 
+        # ---------------------------------------------
+        # SMART HOME - LUZ OFF
+        # ---------------------------------------------
+
         if intent == "smart_home.light_off":
+            location = entities.get("location")
 
             if not self.smart_home:
-                return "O sistema de luzes ainda não está ligado."
+                if location:
+                    return f"Luz desligada em {location}. Sistema smart home ainda em modo simulado."
+                return "Luz desligada. Sistema smart home ainda em modo simulado."
 
-            location = entities.get("location")
             return self.smart_home.controlar_luz(location=location, action="turn_off")
 
+        # ---------------------------------------------
+        # SMART HOME - TOMADA ON
+        # ---------------------------------------------
+
         if intent == "smart_home.plug_on":
+            location = entities.get("location")
 
             if not self.smart_home:
-                return "O sistema de tomadas ainda não está ligado."
+                if location:
+                    return f"Tomada ligada em {location}. Sistema smart home ainda em modo simulado."
+                return "Tomada ligada. Sistema smart home ainda em modo simulado."
 
-            location = entities.get("location")
             return self.smart_home.controlar_tomada(location=location, action="turn_on")
 
+        # ---------------------------------------------
+        # SMART HOME - TOMADA OFF
+        # ---------------------------------------------
+
         if intent == "smart_home.plug_off":
+            location = entities.get("location")
 
             if not self.smart_home:
-                return "O sistema de tomadas ainda não está ligado."
+                if location:
+                    return f"Tomada desligada em {location}. Sistema smart home ainda em modo simulado."
+                return "Tomada desligada. Sistema smart home ainda em modo simulado."
 
-            location = entities.get("location")
             return self.smart_home.controlar_tomada(location=location, action="turn_off")
 
         return None
