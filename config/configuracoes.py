@@ -1,53 +1,41 @@
 # ==================================================
-# 🧠 IDENTIDADE
-# ==================================================
-
-NOME_ASSISTENTE = "jarvis"
-
-
-# ==================================================
-# 🔐 WAKE WORD (Porcupine)
-# ==================================================
-
-ACCESS_KEY = "E6Vz5M9m6Uwc3EbVA7Df3eJ8qaa6dJMxx/4iwU9LwjV3/DV377Llyg=="
-WAKEWORD_KEYWORD = "Jarvis"
-
-# ==================================================
 # 🧠 JARVIS STARK MODE — CONFIGURAÇÃO GLOBAL
 # ==================================================
 
 
 # ==================================================
-# 🎙️ MICROFONE & WAKE WORD
+# 🔑 PICOVOICE / WAKE WORD
 # ==================================================
 
-# ⚠️ Verifica sempre se o índice corresponde ao micro correto
-MIC_INPUT_INDEX = 1
+# mete aqui a tua AccessKey do Picovoice
+ACCESS_KEY = "E6Vz5M9m6Uwc3EbVA7Df3eJ8qaa6dJMxx/4iwU9LwjV3/DV377Llyg=="
 
-# palavra que o Porcupine vai detectar
+# palavra que o Porcupine vai detetar
 WAKEWORD_KEYWORD = "jarvis"
-
-# ==================================================
-# 🔊 WAKE WORD
-# ==================================================
 
 # 0.0 → 1.0 (mais alto = mais sensível)
 WAKEWORD_SENSIBILIDADE = 0.72
 
 
 # ==================================================
+# 🎙️ MICROFONE
+# ==================================================
+
+# confirma depois no terminal qual é o índice certo
+MIC_INPUT_INDEX = 2
+
+
+# ==================================================
 # 🎧 ÁUDIO (AUDIO MANAGER)
 # ==================================================
 
+# Porcupine funciona melhor com 16000 Hz, mono, int16
 SAMPLE_RATE = 16000
-
-# Porcupine usa 512
 CHUNK_SIZE = 512
-
 CHANNELS = 1
 AUDIO_FORMAT = "int16"
 
-# 🔊 Detecção de fala (ajustada para micro USB)
+# deteção de fala
 VOLUME_MINIMO = 0.025
 SILENCIO_LIMITE = 1.25
 TEMPO_MAXIMO_ESPERA_FALA = 9
@@ -85,13 +73,12 @@ TTS_MODO_STARK = True
 # 🤖 LLM — OLLAMA
 # ==================================================
 
-OLLAMA_BASE_URL = "http://localhost:11434/api"
-
-OLLAMA_CHAT_ENDPOINT = "/chat"
-OLLAMA_GENERATE_ENDPOINT = "/generate"
+OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_CHAT_ENDPOINT = "/api/chat"
+OLLAMA_GENERATE_ENDPOINT = "/api/generate"
 
 # modelo principal
-MODELO_LLM = "llama3:8b"
+MODELO_LLM = "mistral:7b-instruct"
 
 # classificador rápido
 MODELO_CLASSIFICADOR = "phi3:mini"
@@ -99,8 +86,7 @@ MODELO_CLASSIFICADOR = "phi3:mini"
 TEMPERATURA = 0.45
 TEMPERATURA_CLASSIFICADOR = 0
 
-TIMEOUT_OLLAMA = 45
-
+TIMEOUT_OLLAMA = 25
 MAX_HISTORICO_CURTO = 6
 
 
@@ -112,7 +98,6 @@ TOP_K_MEMORIA = 3
 PRIORIDADE_MINIMA_AUTO = 2
 
 CAMINHO_MEMORIA = "./memoria_jarvis"
-
 MODELO_EMBEDDING = "all-MiniLM-L6-v2"
 
 
@@ -120,15 +105,13 @@ MODELO_EMBEDDING = "all-MiniLM-L6-v2"
 # ⚙️ SISTEMA
 # ==================================================
 
-# tempo que Jarvis fica em conversa ativa
+# tempo que o Jarvis fica em conversa ativa
 TEMPO_TIMEOUT_CONVERSA = 60
 
 INTERVALO_CHECK_PROATIVO = 120
 
 LOG_ATIVO = True
 MODO_DEBUG = False
-
-# produção
 MEDIR_LATENCIA = False
 
 
@@ -140,7 +123,7 @@ CONFIRMAR_ACOES_CRITICAS = True
 
 
 # ==================================================
-# 🤖 MODELOS MK4
+# 🤖 MODELOS AUXILIARES
 # ==================================================
 
 MODELO_RAPIDO = "llama3"
