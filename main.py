@@ -26,6 +26,7 @@ from memoria.memoria_rag import MemoriaRAG
 
 from interface.hud import iniciar_hud
 from brain.brain_engine import BrainEngine
+from smart_home.hybrid_smart_home import HybridSmartHome
 
 
 log(f"RUNNING: {os.path.abspath(__file__)}")
@@ -72,7 +73,7 @@ class ServerWorker(QThread):
             resposta.raise_for_status()
 
             data = resposta.json()
-            resposta_texto = data.get("resposta", "").strip()
+            resposta_texto = str(data.get("resposta", "")).strip()
 
             if not resposta_texto:
                 resposta_texto = "O cérebro respondeu sem conteúdo."
@@ -94,17 +95,28 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
-    audio_manager = AudioManager()
+    # ------------------------------------------------
+    # INIT BASE
+    # ------------------------------------------------
+    try:
+        audio_manager = AudioManager()
 
-    for d in audio_manager.listar_dispositivos():
-        if d["maxInputChannels"] > 0:
-            log(f"MIC -> index={d['index']} | name={d['name']}")
+        for d in audio_manager.listar_dispositivos():
+            if d["maxInputChannels"] > 0:
+                log(f"MIC -> index={d['index']} | name={d['name']}")
 
-    hud = iniciar_hud(audio_manager)
-    hud.show()
-    hud.set_texto("A carregar sistemas...")
-    hud.set_estado("PROCESSANDO")
+        hud = iniciar_hud(audio_manager)
+        hud.show()
+        hud.set_texto("A carregar sistemas...")
+        hud.set_estado("PROCESSANDO")
 
+    except Exception as e:
+        log(f"❌ ERRO init base: {e}")
+        return
+
+    # ------------------------------------------------
+    # WAKE WORD
+    # ------------------------------------------------
     try:
         wake_engine = WakeWordEngine(audio_manager)
         log("✅ WakeWordEngine pronto.")
@@ -112,6 +124,9 @@ def main():
         log(f"❌ ERRO WakeWordEngine: {e}")
         return
 
+    # ------------------------------------------------
+    # STT
+    # ------------------------------------------------
     try:
         stt = STT(audio_manager)
         log("🔄 A carregar Whisper...")
@@ -121,6 +136,9 @@ def main():
         log(f"❌ ERRO STT/Whisper: {e}")
         return
 
+    # ------------------------------------------------
+    # TTS
+    # ------------------------------------------------
     try:
         tts = TTS()
         log("✅ TTS pronto.")
@@ -128,14 +146,31 @@ def main():
         log(f"❌ ERRO TTS: {e}")
         return
 
+    # ------------------------------------------------
+    # CORE
+    # ------------------------------------------------
     gestor = GestorConversa()
     memoria = MemoriaManager()
     memoria_rag = MemoriaRAG()
-    brain = BrainEngine(memoria, memoria_rag)
+    smart_home = HybridSmartHome()
+
+    try:
+        brain = BrainEngine(
+            memoria,
+            memoria_rag,
+            smart_home=smart_home
+        )
+        log("✅ BrainEngine pronto.")
+    except Exception as e:
+        log(f"❌ ERRO BrainEngine: {e}")
+        return
 
     hud.set_texto("Jarvis MK5 online.")
     hud.set_estado("IDLE")
 
+    # ------------------------------------------------
+    # ESTADO GLOBAL APP
+    # ------------------------------------------------
     app.stt_worker = None
     app.server_worker = None
 
@@ -148,18 +183,21 @@ def main():
     app.next_stt_time = 0.0
     app.force_end_conversation = False
 
-    last_wake_time = 0
-    ultimo_log_wake = 0
+    app.encerrar = False
+
+    last_wake_time = 0.0
+    ultimo_log_wake = 0.0
 
     # ==================================================
     # HELPERS
     # ==================================================
 
-    def pode_ouvir():
+    def pode_ouvir() -> bool:
         return (
-            not app.stt_ativo
+            not app.encerrar
+            and not app.stt_ativo
             and not app.jarvis_ocupado
-            and not tts.is_speaking
+            and not getattr(tts, "is_speaking", False)
         )
 
     def ativar_modo_conversa():
@@ -184,8 +222,10 @@ def main():
         app.force_end_conversation = False
         limpar_agendamento_stt()
         desativar_modo_conversa()
-        hud.set_estado("IDLE")
-        hud.set_texto("Jarvis MK5 online.")
+
+        if not app.encerrar:
+            hud.set_estado("IDLE")
+            hud.set_texto("Jarvis MK5 online.")
 
     def beep_wake():
         try:
@@ -196,14 +236,15 @@ def main():
     def limpar_stt_worker():
         if app.stt_worker:
             try:
-                app.stt_worker.stop()
-            except Exception:
-                pass
+                if hasattr(app.stt_worker, "stop"):
+                    app.stt_worker.stop()
+            except Exception as e:
+                log(f"⚠️ erro ao parar STTWorker: {e}")
 
             try:
-                app.stt_worker.wait(300)
-            except Exception:
-                pass
+                app.stt_worker.wait(500)
+            except Exception as e:
+                log(f"⚠️ erro ao esperar STTWorker: {e}")
 
             app.stt_worker = None
 
@@ -214,7 +255,10 @@ def main():
         app.stt_ativo = False
 
     def finalizar_resposta():
-        gestor.atualizar_interacao()
+        try:
+            gestor.atualizar_interacao()
+        except Exception as e:
+            log(f"⚠️ erro atualizar interação: {e}")
 
         app.jarvis_ocupado = False
         app.stt_ativo = False
@@ -229,6 +273,42 @@ def main():
         hud.set_texto("Estou a ouvir...")
 
         agendar_stt(FOLLOWUP_STT_DELAY)
+
+    def cleanup():
+        log("🛑 A encerrar Jarvis MK5...")
+        app.encerrar = True
+
+        try:
+            if hasattr(app, "timer") and app.timer:
+                app.timer.stop()
+        except Exception:
+            pass
+
+        try:
+            limpar_agendamento_stt()
+            desativar_modo_conversa()
+        except Exception:
+            pass
+
+        try:
+            limpar_stt_worker()
+        except Exception:
+            pass
+
+        try:
+            if app.server_worker and app.server_worker.isRunning():
+                app.server_worker.quit()
+                app.server_worker.wait(500)
+        except Exception:
+            pass
+
+        try:
+            if getattr(tts, "is_speaking", False):
+                tts.stop()
+        except Exception:
+            pass
+
+    app.aboutToQuit.connect(cleanup)
 
     # ==================================================
     # STT
@@ -263,6 +343,8 @@ def main():
     # ==================================================
 
     def responder_localmente(resposta: str):
+        resposta = str(resposta).strip()
+
         if not resposta:
             resetar_para_idle()
             return
@@ -285,6 +367,10 @@ def main():
         hud.set_estado("PROCESSANDO")
         hud.set_texto("A pensar...")
 
+        if app.server_worker and app.server_worker.isRunning():
+            log("⚠️ Já existe ServerWorker ativo.")
+            return
+
         app.server_worker = ServerWorker(texto)
         app.server_worker.resultado.connect(processar_resposta_servidor)
         app.server_worker.erro.connect(processar_erro_servidor)
@@ -292,6 +378,11 @@ def main():
         app.server_worker.start()
 
     def processar_resposta_servidor(resposta: str):
+        resposta = str(resposta).strip()
+
+        if not resposta:
+            resposta = "Não consegui gerar uma resposta."
+
         hud.set_estado("RESPONDENDO")
         hud.set_texto(resposta)
 
@@ -299,6 +390,8 @@ def main():
         tts.falar(resposta)
 
     def processar_erro_servidor(msg: str):
+        msg = str(msg).strip() or "Erro no servidor."
+
         hud.set_estado("RESPONDENDO")
         hud.set_texto(msg)
 
@@ -314,7 +407,9 @@ def main():
         app.stt_ativo = False
 
         try:
-            if not texto or len(texto.strip()) < 2:
+            texto = (texto or "").strip()
+
+            if len(texto) < 2:
                 log("⚠️ STT vazio")
 
                 if app.modo_conversa and time.time() < app.conversa_ate:
@@ -331,23 +426,24 @@ def main():
             ativar_modo_conversa()
             app.followup_retries = 0
 
-            texto_original = corrigir_texto_stt(texto.strip())
+            texto_original = corrigir_texto_stt(texto)
             log(f"🎤 STT: {texto_original}")
 
             resposta_brain = brain.processar(texto_original)
 
             if resposta_brain:
                 if isinstance(resposta_brain, dict):
-                    resposta_texto = resposta_brain.get("text", "")
+                    resposta_texto = str(resposta_brain.get("text", "")).strip()
                     app.force_end_conversation = bool(
                         resposta_brain.get("end_conversation", False)
                     )
                 else:
-                    resposta_texto = str(resposta_brain)
+                    resposta_texto = str(resposta_brain).strip()
                     app.force_end_conversation = False
 
-                responder_localmente(resposta_texto)
-                return
+                if resposta_texto:
+                    responder_localmente(resposta_texto)
+                    return
 
             app.force_end_conversation = False
             perguntar_servidor_async(texto_original)
@@ -364,6 +460,9 @@ def main():
         nonlocal last_wake_time, ultimo_log_wake
 
         try:
+            if app.encerrar:
+                return
+
             if app.stt_ativo or app.jarvis_ocupado:
                 return
 
@@ -403,7 +502,7 @@ def main():
                 log("🔥 WAKE WORD DETETADA")
 
                 try:
-                    if tts.is_speaking:
+                    if getattr(tts, "is_speaking", False):
                         tts.stop()
                 except Exception:
                     pass
@@ -425,6 +524,10 @@ def main():
 
         except Exception as e:
             log(f"❌ ERRO ciclo: {e}")
+
+    # ==================================================
+    # TIMER LOOP
+    # ==================================================
 
     app.timer = QTimer()
     app.timer.timeout.connect(ciclo)

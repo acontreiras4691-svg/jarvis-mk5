@@ -15,8 +15,9 @@ class ContextManager:
     # ------------------------------------------------
 
     def set(self, chave, valor):
-        self.contexto[chave] = valor
-        self.ultimo_update = time.time()
+        if valor is not None:
+            self.contexto[chave] = valor
+            self.ultimo_update = time.time()
 
     # ------------------------------------------------
 
@@ -30,8 +31,39 @@ class ContextManager:
     # ------------------------------------------------
 
     def update(self, dados: dict):
-        self.contexto.update(dados)
-        self.ultimo_update = time.time()
+        """
+        Atualiza contexto sem deixar valores None apagarem contexto válido.
+        """
+        if self.expirado():
+            self.clear()
+
+        houve_update = False
+
+        for chave, valor in dados.items():
+            if valor is not None:
+                self.contexto[chave] = valor
+                houve_update = True
+
+        if houve_update:
+            self.ultimo_update = time.time()
+
+    # ------------------------------------------------
+
+    def enrich(self, dados: dict) -> dict:
+        """
+        Preenche campos em falta com contexto anterior ainda válido.
+        """
+        if self.expirado():
+            self.clear()
+            return dados
+
+        resultado = dict(dados)
+
+        for chave, valor in self.contexto.items():
+            if resultado.get(chave) is None:
+                resultado[chave] = valor
+
+        return resultado
 
     # ------------------------------------------------
 

@@ -1,0 +1,37 @@
+{
+    "timestamp": 1774121430.7676754,
+    "devices": [
+        {
+            "id": "bfcdaf6c99ef575ce9byxu",
+            "ip": "192.168.1.70",
+            "uuid": "f79255d93b02df1c",
+            "active": 2,
+            "encrypt": true,
+            "productKey": "wtynpqkaw737iwdv",
+            "token": true,
+            "wf_cfg": true,
+            "sl": 0,
+            "clientLink": 3,
+            "name": "Smart Ceiling Light",
+            "key": "v4TA0[}GqOwMdA;5",
+            "mac": "d8:c8:0c:4c:6d:d6",
+            "ability": 0,
+            "dev_type": "default",
+            "err": "",
+            "type": "default",
+            "dps": {
+                "dps": {
+                    "20": true,
+                    "22": 1000,
+                    "23": 1000,
+                    "24": "000003E803E8",
+                    "34": false,
+                    "54": false,
+                    "63": true
+                }
+            },
+            "origin": "broadcast",
+            "ver": "3.5"
+        }
+    ]
+}

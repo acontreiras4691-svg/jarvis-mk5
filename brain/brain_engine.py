@@ -2,310 +2,506 @@
 # 🧠 BRAIN ENGINE - JARVIS MK5
 # ==================================================
 
+import re
+import time
+
 from brain.intent_router import IntentRouter
-from brain.context_manager import ContextManager
 from executor.executor_engine import Executor
+from core.logger import log
 
 
 class BrainEngine:
-
     def __init__(self, memoria, memoria_rag, smart_home=None):
         self.memoria = memoria
         self.memoria_rag = memoria_rag
+        self.smart_home = smart_home
 
         self.router = IntentRouter()
         self.executor = Executor(smart_home=smart_home)
 
-        self.ultimo_texto = ""
-        self.ultimo_intent = None
-        self.ultimas_entities = {}
+        self.pending_confirmation = None
 
-        self.context = ContextManager()
+        self.confirm_yes = {
+            "sim",
+            "ya",
+            "yah",
+            "yap",
+            "claro",
+            "confirmo",
+            "confirmar",
+            "podes",
+            "pode ser",
+            "forca",
+            "força",
+            "avanca",
+            "avança",
+            "ok",
+            "okay",
+            "faz isso",
+            "executa",
+        }
 
-    # ------------------------------------------------
+        self.confirm_no = {
+            "não",
+            "nao",
+            "nop",
+            "nopes",
+            "cancela",
+            "cancelar",
+            "para",
+            "deixa",
+            "afinal nao",
+            "afinal não",
+            "esquece",
+            "esquecer",
+            "nao quero",
+            "não quero",
+        }
+
+        self.contexto_curto = {
+            "location": None,
+            "device_type": None,
+            "last_intent": None,
+            "updated_at": 0.0,
+        }
+
+        self.context_ttl = 45.0
+
+    # ==================================================
+    # HELPERS GERAIS
+    # ==================================================
+
+    def _normalizar(self, texto: str) -> str:
+        return (texto or "").strip().lower()
+
+    def _limpar_confirmacao(self):
+        self.pending_confirmation = None
+
+    def _guardar_confirmacao(self, intent_data: dict):
+        self.pending_confirmation = intent_data
+
+    def _precisa_confirmacao(self, intent_data: dict) -> bool:
+        return bool(intent_data.get("requires_confirmation", False))
+
+    def _texto_confirmacao(self, intent_data: dict) -> str:
+        intent = intent_data.get("intent")
+        entities = intent_data.get("entities", {}) or {}
+
+        if intent == "system.shutdown":
+            return "Tens a certeza que queres desligar o computador?"
+
+        if intent == "system.restart":
+            return "Tens a certeza que queres reiniciar o computador?"
+
+        if intent == "smart_home.light_off":
+            location = entities.get("location")
+            if location:
+                return f"Tens a certeza que queres apagar a luz em {location}?"
+            return "Tens a certeza que queres apagar a luz?"
+
+        if intent == "smart_home.plug_off":
+            location = entities.get("location")
+            if location:
+                return f"Tens a certeza que queres desligar a tomada em {location}?"
+            return "Tens a certeza que queres desligar a tomada?"
+
+        return "Tens a certeza que queres executar esse comando?"
+
+    def _responder_confirmacao(self, texto: str):
+        texto_norm = self._normalizar(texto)
+
+        if not self.pending_confirmation:
+            return None
+
+        if texto_norm in self.confirm_yes:
+            intent_data = self.pending_confirmation
+            self._limpar_confirmacao()
+
+            log("✅ Confirmação aceite.")
+
+            try:
+                resposta = self.executor.executar(intent_data)
+            except Exception as e:
+                log(f"❌ ERRO no Executor após confirmação: {e}")
+                return {
+                    "text": "Ocorreu um erro ao executar o comando confirmado.",
+                    "end_conversation": True
+                }
+
+            if not resposta:
+                resposta = "Comando confirmado, mas não consegui executar corretamente."
+
+            self._atualizar_contexto(intent_data)
+
+            return {
+                "text": resposta,
+                "end_conversation": False
+            }
+
+        if texto_norm in self.confirm_no:
+            self._limpar_confirmacao()
+
+            log("🛑 Confirmação cancelada pelo utilizador.")
+            return {
+                "text": "Comando cancelado.",
+                "end_conversation": True
+            }
+
+        return {
+            "text": "Responde só com sim ou não.",
+            "end_conversation": False
+        }
+
+    # ==================================================
     # CONTEXTO CURTO
-    # ------------------------------------------------
+    # ==================================================
 
-    def guardar_contexto(self, texto: str, intent_data: dict):
-        self.ultimo_texto = texto
-        self.ultimo_intent = intent_data.get("intent")
-        self.ultimas_entities = intent_data.get("entities", {}) or {}
+    def _contexto_valido(self) -> bool:
+        updated_at = self.contexto_curto.get("updated_at", 0.0)
+        if not updated_at:
+            return False
+        return (time.time() - updated_at) <= self.context_ttl
+
+    def _limpar_contexto(self):
+        self.contexto_curto = {
+            "location": None,
+            "device_type": None,
+            "last_intent": None,
+            "updated_at": 0.0,
+        }
+
+    def _atualizar_contexto(self, intent_data: dict):
+        intent = intent_data.get("intent")
+        entities = intent_data.get("entities", {}) or {}
+
+        intents_contexto = {
+            "smart_home.light_on",
+            "smart_home.light_off",
+            "smart_home.light_set_brightness",
+            "smart_home.light_off_timer",
+            "smart_home.plug_on",
+            "smart_home.plug_off",
+        }
+
+        if intent not in intents_contexto:
+            return
+
+        location = entities.get("location")
+        device_type = entities.get("device_type")
+
+        if not device_type:
+            if "light" in intent:
+                device_type = "light"
+            elif "plug" in intent:
+                device_type = "plug"
+
+        if location or device_type:
+            self.contexto_curto = {
+                "location": location or self.contexto_curto.get("location"),
+                "device_type": device_type or self.contexto_curto.get("device_type"),
+                "last_intent": intent,
+                "updated_at": time.time(),
+            }
+
+            log(
+                f"🧠 Contexto atualizado -> "
+                f"location={self.contexto_curto['location']} | "
+                f"device_type={self.contexto_curto['device_type']} | "
+                f"intent={self.contexto_curto['last_intent']}"
+            )
+
+    # ==================================================
+    # FOLLOW-UP / ENRIQUECIMENTO
+    # ==================================================
+
+    def _extrair_location_followup(self, texto: str):
+        texto_norm = self.router.normalizar(texto)
+
+        # primeiro tenta a extração normal do router
+        location = self.router.extract_smart_location(texto_norm)
+        if location:
+            return location
+
+        # padrões simples de follow-up
+        patterns = [
+            r"\bno ([\wçãõáéíóú]+)\b",
+            r"\bna ([\wçãõáéíóú]+)\b",
+            r"\bdo ([\wçãõáéíóú]+)\b",
+            r"\bda ([\wçãõáéíóú]+)\b",
+        ]
+
+        locais_validos = {
+            "quarto",
+            "sala",
+            "cozinha",
+            "escritorio",
+            "escritório",
+            "wc",
+            "corredor",
+        }
+
+        for pattern in patterns:
+            match = re.search(pattern, texto_norm)
+            if match:
+                possivel = match.group(1).strip()
+                possivel = self.router.normalizar(possivel)
+
+                if possivel in locais_validos:
+                    if possivel == "escritorio":
+                        return "escritório"
+                    return possivel
+
+        return None
+
+    def _extrair_device_followup(self, texto: str):
+        texto_norm = self.router.normalizar(texto)
+
+        if "tomada" in texto_norm:
+            return "plug"
+
+        if "luz" in texto_norm:
+            return "light"
+
+        if "essa luz" in texto_norm or "a luz" in texto_norm:
+            return "light"
+
+        return None
+
+    def _resolver_followup_incompleto(self, texto: str, intent_data: dict):
+        """
+        Só tenta inferir comando quando o router devolve chat.
+        Exemplos:
+        - 'na sala'
+        - 'do wc'
+        - 'a 20%'
+        - 'desliga'
+        - 'liga'
+        - 'em 2 minutos'
+        """
+        if not self._contexto_valido():
+            return intent_data
+
+        if intent_data.get("type") != "chat":
+            return intent_data
+
+        texto_norm = self.router.normalizar(texto)
+        location = self._extrair_location_followup(texto)
+        device_type = self._extrair_device_followup(texto) or self.contexto_curto.get("device_type")
+        last_location = self.contexto_curto.get("location")
+        last_intent = self.contexto_curto.get("last_intent")
+
+        # brilho curto: "a 20%" / "20%"
+        brightness = self.router.extract_brightness(texto_norm)
+        if brightness is not None:
+            return {
+                "type": "command",
+                "intent": "smart_home.light_set_brightness",
+                "entities": {
+                    "location": location or last_location,
+                    "device_type": "light",
+                    "brightness": brightness,
+                },
+                "confidence": 0.78,
+                "requires_confirmation": False,
+            }
+
+        # timer curto: "em 2 minutos"
+        minutes = self.router.extract_minutes(texto_norm)
+        if minutes is not None:
+            # por agora timer é só para luz
+            return {
+                "type": "command",
+                "intent": "smart_home.light_off_timer",
+                "entities": {
+                    "location": location or last_location,
+                    "device_type": "light",
+                    "minutes": minutes,
+                },
+                "confidence": 0.77,
+                "requires_confirmation": False,
+            }
+
+        # follow-up curto: "liga"
+        if texto_norm in {"liga", "acende"}:
+            intent = "smart_home.light_on"
+            if device_type == "plug":
+                intent = "smart_home.plug_on"
+
+            return {
+                "type": "command",
+                "intent": intent,
+                "entities": {
+                    "location": location or last_location,
+                    "device_type": device_type or "light",
+                    "action": "turn_on",
+                },
+                "confidence": 0.75,
+                "requires_confirmation": False,
+            }
+
+        # follow-up curto: "desliga" / "apaga"
+        if texto_norm in {"desliga", "apaga"}:
+            intent = "smart_home.light_off"
+            if device_type == "plug":
+                intent = "smart_home.plug_off"
+
+            return {
+                "type": "command",
+                "intent": intent,
+                "entities": {
+                    "location": location or last_location,
+                    "device_type": device_type or "light",
+                    "action": "turn_off",
+                },
+                "confidence": 0.75,
+                "requires_confirmation": False,
+            }
+
+        # só mudança de local: "na sala" / "do wc"
+        if location and last_intent:
+            entities = {
+                "location": location,
+                "device_type": self.contexto_curto.get("device_type"),
+            }
+
+            if last_intent in {"smart_home.light_on", "smart_home.light_off"}:
+                entities["action"] = "turn_on" if last_intent.endswith("light_on") else "turn_off"
+
+            if last_intent in {"smart_home.plug_on", "smart_home.plug_off"}:
+                entities["action"] = "turn_on" if last_intent.endswith("plug_on") else "turn_off"
+
+            return {
+                "type": "command",
+                "intent": last_intent,
+                "entities": entities,
+                "confidence": 0.70,
+                "requires_confirmation": False,
+            }
+
+        return intent_data
+
+    def _enriquecer_com_contexto(self, intent_data: dict) -> dict:
+        if not intent_data:
+            return intent_data
+
+        if not self._contexto_valido():
+            return intent_data
 
         intent = intent_data.get("intent")
         entities = intent_data.get("entities", {}) or {}
 
-        dados_contexto = {
-            "last_text": texto,
-            "last_intent": intent,
-        }
+        if not intent:
+            return intent_data
 
-        if entities.get("location"):
-            dados_contexto["last_location"] = entities.get("location")
+        location_ctx = self.contexto_curto.get("location")
+        device_ctx = self.contexto_curto.get("device_type")
 
-        if entities.get("device_type"):
-            dados_contexto["last_device_type"] = entities.get("device_type")
-
-        if entities.get("action"):
-            dados_contexto["last_action"] = entities.get("action")
-
-        if entities.get("app"):
-            dados_contexto["last_app"] = entities.get("app")
-
-        if entities.get("brightness") is not None:
-            dados_contexto["last_brightness"] = entities.get("brightness")
-
-        if entities.get("minutes") is not None:
-            dados_contexto["last_minutes"] = entities.get("minutes")
-
-        self.context.update(dados_contexto)
-
-    # ------------------------------------------------
-    # FOLLOW-UP
-    # ------------------------------------------------
-
-    def eh_followup(self, texto: str) -> bool:
-        texto = texto.lower().strip()
-
-        starts = [
-            "e ",
-            "entao ",
-            "então ",
-            "agora ",
-            "depois ",
-            "e em ",
-            "e no ",
-            "e na ",
-            "e amanhã",
-            "e amanha",
-            "e depois",
-            "e também",
-            "tambem ",
-            "também ",
-            "baixa ",
-            "aumenta ",
-            "mete ",
-            "poe ",
-            "põe ",
-            "apaga em ",
-            "apaga daqui a ",
-            "desliga em ",
-            "desliga daqui a ",
-        ]
-
-        return any(texto.startswith(x) for x in starts)
-
-    def resolver_followup(self, texto: str) -> str:
-        texto_lower = texto.lower().strip()
-
-        if not self.ultimo_intent:
-            return texto
-
-        # ---------------------------------------------
-        # FOLLOW-UP DE HORAS
-        # ---------------------------------------------
-        if self.ultimo_intent == "assistant.time":
-
-            if "portugal" in texto_lower:
-                return "que horas são em portugal"
-
-            if "suica" in texto_lower or "suíça" in texto_lower:
-                return "que horas são na suica"
-
-            if "espanha" in texto_lower:
-                return "que horas são em espanha"
-
-            if "franca" in texto_lower or "frança" in texto_lower:
-                return "que horas são na franca"
-
-            if "lausanne" in texto_lower:
-                return "que horas são em lausanne"
-
-            if "lisboa" in texto_lower:
-                return "que horas são em lisboa"
-
-            if "amanhã" in texto_lower or "amanha" in texto_lower:
-                return "que horas serão amanhã"
-
-            if texto_lower.startswith("e "):
-                resto = texto_lower[2:].strip()
-                return f"que horas são {resto}"
-
-        # ---------------------------------------------
-        # FOLLOW-UP DE DATA
-        # ---------------------------------------------
-        if self.ultimo_intent == "assistant.date":
-
-            if "amanhã" in texto_lower or "amanha" in texto_lower:
-                return "que dia será amanhã"
-
-            if "portugal" in texto_lower:
-                return "que dia é hoje em portugal"
-
-            if "espanha" in texto_lower:
-                return "que dia é hoje em espanha"
-
-            if "franca" in texto_lower or "frança" in texto_lower:
-                return "que dia é hoje na franca"
-
-            if texto_lower.startswith("e "):
-                resto = texto_lower[2:].strip()
-                return f"que dia é {resto}"
-
-        # ---------------------------------------------
-        # FOLLOW-UP SMART HOME ON/OFF
-        # ---------------------------------------------
-        if self.ultimo_intent in [
+        intents_smart = {
             "smart_home.light_on",
             "smart_home.light_off",
-            "smart_home.plug_on",
-            "smart_home.plug_off",
             "smart_home.light_set_brightness",
             "smart_home.light_off_timer",
-        ]:
-            acao = self.context.get("last_action", self.ultimas_entities.get("action"))
-            device_type = self.context.get(
-                "last_device_type",
-                self.ultimas_entities.get("device_type", "light")
-            )
-            last_location = self.context.get("last_location")
+            "smart_home.plug_on",
+            "smart_home.plug_off",
+        }
 
-            # divisão omitida
-            if texto_lower.startswith("e no "):
-                local = texto_lower.replace("e no ", "", 1).strip()
+        if intent not in intents_smart:
+            return intent_data
 
-                if device_type == "light" and acao == "turn_on":
-                    return f"acende a luz no {local}"
-                if device_type == "light" and acao == "turn_off":
-                    return f"apaga a luz no {local}"
-                if device_type == "plug" and acao == "turn_on":
-                    return f"liga a tomada no {local}"
-                if device_type == "plug" and acao == "turn_off":
-                    return f"desliga a tomada no {local}"
+        if not entities.get("location") and location_ctx:
+            entities["location"] = location_ctx
 
-            if texto_lower.startswith("e na "):
-                local = texto_lower.replace("e na ", "", 1).strip()
+        if not entities.get("device_type") and device_ctx:
+            entities["device_type"] = device_ctx
 
-                if device_type == "light" and acao == "turn_on":
-                    return f"acende a luz na {local}"
-                if device_type == "light" and acao == "turn_off":
-                    return f"apaga a luz na {local}"
-                if device_type == "plug" and acao == "turn_on":
-                    return f"liga a tomada na {local}"
-                if device_type == "plug" and acao == "turn_off":
-                    return f"desliga a tomada na {local}"
+        # reforçar pelo intent real
+        if "light" in intent:
+            entities["device_type"] = "light"
 
-            # brilho omitindo divisão
-            if (
-                "metade" in texto_lower
-                or "brilho" in texto_lower
-                or "intensidade" in texto_lower
-                or texto_lower.startswith("baixa")
-                or texto_lower.startswith("aumenta")
-                or texto_lower.startswith("mete")
-                or texto_lower.startswith("poe")
-                or texto_lower.startswith("põe")
-            ):
-                if last_location:
-                    return f"mete a luz no {last_location} para metade"
-                return "mete a luz para metade"
+        if "plug" in intent:
+            entities["device_type"] = "plug"
 
-            # temporizador omitindo divisão
-            if (
-                texto_lower.startswith("apaga em ")
-                or texto_lower.startswith("apaga daqui a ")
-                or texto_lower.startswith("desliga em ")
-                or texto_lower.startswith("desliga daqui a ")
-            ):
-                if last_location:
-                    return f"apaga a luz no {last_location} {texto_lower}"
-                return f"apaga a luz {texto_lower}"
+        intent_data["entities"] = entities
 
-        # ---------------------------------------------
-        # FOLLOW-UP DE APPS
-        # ---------------------------------------------
-        if self.ultimo_intent == "system.open_app":
-            if texto_lower.startswith("e "):
-                resto = texto_lower[2:].strip()
-                return f"abre {resto}"
+        log(
+            f"🧩 Contexto aplicado -> intent={intent} | "
+            f"location={entities.get('location')} | "
+            f"device_type={entities.get('device_type')}"
+        )
 
-        return texto
+        return intent_data
 
-    # ------------------------------------------------
-    # RESPOSTAS INSTANTÂNEAS
-    # ------------------------------------------------
+    # ==================================================
+    # PROCESSAR
+    # ==================================================
 
-    def resposta_instantanea(self, texto: str):
-        texto = texto.lower().strip()
+    def processar(self, texto: str):
+        texto = (texto or "").strip()
 
-        if texto in ["olá", "ola", "olá jarvis", "ola jarvis"]:
+        if not texto:
             return {
-                "text": "Olá, Dudu.",
-                "end_conversation": False,
+                "text": "Não percebi o comando.",
+                "end_conversation": True
             }
 
-        if "obrigado" in texto or "obrigada" in texto:
+        if not self._contexto_valido():
+            self._limpar_contexto()
+
+        # confirmação pendente
+        if self.pending_confirmation is not None:
+            return self._responder_confirmacao(texto)
+
+        # router base
+        try:
+            intent_data = self.router.detectar_intencao(texto)
+        except Exception as e:
+            log(f"❌ ERRO no IntentRouter: {e}")
+            return None
+
+        if not intent_data:
+            return None
+
+        # tenta resolver follow-up quando vier como chat
+        intent_data = self._resolver_followup_incompleto(texto, intent_data)
+
+        if intent_data.get("type") == "chat":
+            return None
+
+        # completa entidades com contexto recente
+        intent_data = self._enriquecer_com_contexto(intent_data)
+
+        intent = intent_data.get("intent")
+        entities = intent_data.get("entities", {}) or {}
+        requires_confirmation = bool(intent_data.get("requires_confirmation", False))
+
+        log(
+            f"🧠 Intent detetada -> intent={intent} | "
+            f"entities={entities} | confirm={requires_confirmation}"
+        )
+
+        # confirmação
+        if self._precisa_confirmacao(intent_data):
+            self._guardar_confirmacao(intent_data)
             return {
-                "text": "Sempre às ordens.",
-                "end_conversation": True,
+                "text": self._texto_confirmacao(intent_data),
+                "end_conversation": False
             }
 
-        if texto in ["tchau", "adeus", "até já", "ate ja", "até logo", "ate logo"]:
+        # execução local
+        try:
+            resposta = self.executor.executar(intent_data)
+        except Exception as e:
+            log(f"❌ ERRO no Executor: {e}")
             return {
-                "text": "Até já, Dudu.",
-                "end_conversation": True,
+                "text": "Ocorreu um erro ao executar o comando local.",
+                "end_conversation": True
             }
 
-        if "bom trabalho" in texto:
+        if resposta:
+            self._atualizar_contexto(intent_data)
             return {
-                "text": "Naturalmente.",
-                "end_conversation": False,
+                "text": resposta,
+                "end_conversation": False
             }
 
         return None
-
-    # ------------------------------------------------
-    # PROCESSAR
-    # ------------------------------------------------
-
-    def processar(self, texto: str):
-        try:
-            texto = texto.strip()
-
-            if self.eh_followup(texto):
-                texto = self.resolver_followup(texto)
-
-            resposta = self.resposta_instantanea(texto)
-            if resposta:
-                return resposta
-
-            resultado = self.router.route_intent(texto)
-            tipo = resultado.get("type")
-
-            if tipo == "command":
-                self.guardar_contexto(texto, resultado)
-
-                resposta = self.executor.executar(resultado)
-
-                if resposta:
-                    return {
-                        "text": resposta,
-                        "end_conversation": False,
-                    }
-
-                return {
-                    "text": "Não consegui executar o comando.",
-                    "end_conversation": False,
-                }
-
-            if tipo == "chat":
-                self.guardar_contexto(texto, resultado)
-                return None
-
-            return None
-
-        except Exception as e:
-            print(f"Erro BrainEngine: {e}")
-            return {
-                "text": "Erro interno no cérebro do Jarvis.",
-                "end_conversation": True,
-            }

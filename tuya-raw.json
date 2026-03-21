@@ -1,0 +1,71 @@
+{
+    "result": [
+        {
+            "active_time": 1773608008,
+            "biz_type": 18,
+            "category": "xdd",
+            "create_time": 1773608008,
+            "icon": "smart/icon/bay16341152123566Lf0/4a0309e1f166180b42529c0e8d220c7d.jpg",
+            "id": "bfcdaf6c99ef575ce9byxu",
+            "ip": "62.167.56.191",
+            "lat": "46.27",
+            "local_key": "v4TA0[}GqOwMdA;5",
+            "lon": "6.93",
+            "model": "",
+            "name": "Smart Ceiling Light",
+            "online": true,
+            "owner_id": "279812044",
+            "product_id": "wtynpqkaw737iwdv",
+            "product_name": "Smart Ceiling Light",
+            "status": [
+                {
+                    "code": "switch_led",
+                    "value": true
+                },
+                {
+                    "code": "work_mode",
+                    "value": "white"
+                },
+                {
+                    "code": "bright_value",
+                    "value": 1000
+                },
+                {
+                    "code": "temp_value",
+                    "value": 1000
+                },
+                {
+                    "code": "colour_data",
+                    "value": "{\"h\":0,\"s\":1000,\"v\":1000}"
+                },
+                {
+                    "code": "scene_data",
+                    "value": ""
+                },
+                {
+                    "code": "countdown",
+                    "value": 0
+                },
+                {
+                    "code": "do_not_disturb",
+                    "value": false
+                }
+            ],
+            "sub": false,
+            "time_zone": "+01:00",
+            "uid": "eu1773607514976c1OmD",
+            "update_time": 1774116301,
+            "uuid": "f79255d93b02df1c"
+        }
+    ],
+    "success": true,
+    "t": 1774121055990,
+    "tid": "8cc0019b255b11f1a3e3d6f140768b5b",
+    "file": {
+        "name": "tuya-raw.json",
+        "description": "Full raw list of Tuya devices.",
+        "account": "t79faap584qqmpmju4mg",
+        "date": "2026-03-21T20:24:16.014915",
+        "tinytuya": "1.17.6"
+    }
+}
