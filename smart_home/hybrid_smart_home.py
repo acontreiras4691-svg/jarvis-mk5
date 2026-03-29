@@ -1,33 +1,31 @@
 # ==================================================
 # 🏠 HYBRID SMART HOME - JARVIS MK5
 # WC real local + quarto cloud + resto simulado
+# + Apple TV
 # ==================================================
 
+import threading
+
 from core.logger import log
-from smart_home.smart_home_simulator import SmartHomeSimulator
 from smart_home.tuya_light import TuyaLight
 from smart_home.tuya_cloud_light import TuyaCloudLight
+from smart_home.smart_home_manager import SmartHomeManager
+from smart_home.apple_tv_controller import AppleTVController
 
 
 class HybridSmartHome:
-    def __init__(self, wc_controller=None):
-        """
-        wc_controller:
-            opcional. Se vier, usa esse controller para o WC.
-            Se não vier, usa a configuração Tuya local definida abaixo.
-        """
-        self.simulator = SmartHomeSimulator()
+    def __init__(self, wc_controller=None, apple_tv_controller=None):
+        self.simulator = SmartHomeManager()
 
-        # ------------------------------------------------
-        # LUZES LOCAIS
-        # ------------------------------------------------
+        # -------------------------
+        # LOCAL (WC)
+        # -------------------------
         self.real_lights = {}
 
-        if wc_controller is not None:
+        if wc_controller:
             self.real_lights["wc"] = wc_controller
             log("💡 WC ligado por wc_controller externo.")
         else:
-            # Mantém aqui os teus valores reais locais
             self.real_lights["wc"] = TuyaLight(
                 device_id="bfcdaf6c99ef575ce9byxu",
                 ip="192.168.1.70",
@@ -35,9 +33,9 @@ class HybridSmartHome:
                 version=3.5,
             )
 
-        # ------------------------------------------------
-        # LUZES CLOUD
-        # ------------------------------------------------
+        # -------------------------
+        # CLOUD (QUARTO)
+        # -------------------------
         self.cloud_lights = {
             "quarto": TuyaCloudLight(
                 api_region="eu",
@@ -48,113 +46,159 @@ class HybridSmartHome:
             )
         }
 
-        log("🏠 HybridSmartHome iniciado.")
+        # -------------------------
+        # APPLE TV
+        # -------------------------
+        self.apple_tv = apple_tv_controller or AppleTVController()
+
+        log("🏠 HybridSmartHome pronto.")
         log(f"🏠 Luzes locais: {list(self.real_lights.keys())}")
         log(f"☁️ Luzes cloud: {list(self.cloud_lights.keys())}")
+        log("📺 Apple TV integrada.")
 
-    # ------------------------------------------------
+    # ==================================================
     # HELPERS
-    # ------------------------------------------------
+    # ==================================================
 
     def _normalizar_local(self, location):
         if not location:
             return None
 
-        original = str(location)
-        location = original.lower().strip()
+        location = str(location).lower().strip()
 
         mapa = {
             "casa de banho": "wc",
             "banho": "wc",
-            "escritorio": "escritório",
-            "escritório": "escritório",
             "quarto de dormir": "quarto",
+            "escritorio": "escritório",
         }
 
-        normalizado = mapa.get(location, location)
-        log(f"🏠 _normalizar_local -> original='{original}' | normalizado='{normalizado}'")
-        return normalizado
+        return mapa.get(location, location)
 
-    def _tem_luz_local(self, location):
-        location = self._normalizar_local(location)
-        return location in self.real_lights
-
-    def _tem_luz_cloud(self, location):
-        location = self._normalizar_local(location)
-        return location in self.cloud_lights
-
-    def _default_location(self, location):
-        return self._normalizar_local(location) or "quarto"
-
-    def _sim_set_brightness(self, location, brightness):
-        return self.simulator.definir_brilho(location=location, brightness=brightness)
-
-    # ------------------------------------------------
-    # LUZ
-    # ------------------------------------------------
-
-    def controlar_luz(self, location=None, action="turn_on"):
-        location = self._normalizar_local(location)
-        log(f"🏠 controlar_luz -> location='{location}' | action='{action}'")
-
-        if self._tem_luz_local(location):
-            light = self.real_lights[location]
-            log(f"💡 usar LUZ LOCAL em '{location}'")
-
+    def _run_async(self, fn, descricao="ação"):
+        def runner():
             try:
-                if hasattr(light, "turn_on") and hasattr(light, "turn_off"):
-                    if action == "turn_on":
-                        ok = light.turn_on()
-                        return f"Luz ligada em {location}." if ok else f"Não consegui ligar a luz em {location}."
-
-                    if action == "turn_off":
-                        ok = light.turn_off()
-                        return f"Luz desligada em {location}." if ok else f"Não consegui desligar a luz em {location}."
-                else:
-                    if action == "turn_on":
-                        ok = light.ligar()
-                        return f"Luz ligada em {location}." if ok else f"Não consegui ligar a luz em {location}."
-
-                    if action == "turn_off":
-                        ok = light.desligar()
-                        return f"Luz desligada em {location}." if ok else f"Não consegui desligar a luz em {location}."
+                log(f"⚡ Async start -> {descricao}")
+                fn()
+                log(f"✅ Async done -> {descricao}")
             except Exception as e:
-                log(f"⚠️ Erro na luz local '{location}': {e}")
-                return f"Não consegui controlar a luz em {location}."
+                log(f"❌ Async erro ({descricao}): {e}")
 
+        t = threading.Thread(target=runner, daemon=True)
+        t.start()
+
+    def _ligar_local(self, light):
+        if hasattr(light, "turn_on"):
+            return light.turn_on()
+        if hasattr(light, "ligar"):
+            return light.ligar()
+        raise AttributeError("Luz local sem método para ligar")
+
+    def _desligar_local(self, light):
+        if hasattr(light, "turn_off"):
+            return light.turn_off()
+        if hasattr(light, "desligar"):
+            return light.desligar()
+        raise AttributeError("Luz local sem método para desligar")
+
+    def _set_brilho_local(self, light, brightness):
+        if hasattr(light, "set_brightness"):
+            return light.set_brightness(brightness)
+        if hasattr(light, "definir_brilho"):
+            return light.definir_brilho(brightness)
+        raise AttributeError("Luz local sem método de brilho")
+
+    # ==================================================
+    # LUZ
+    # ==================================================
+
+    def controlar_luz(self, location=None, action=None, brightness=None):
+        location = self._normalizar_local(location)
+
+        if not location:
+            return "Não disseste a divisão."
+
+        # Se vier brightness, redireciona para brilho
+        if brightness is not None:
+            return self.definir_brilho(location=location, brightness=brightness)
+
+        if not action:
             return "Não percebi o comando para a luz."
 
-        if self._tem_luz_cloud(location):
-            light = self.cloud_lights[location]
-            log(f"☁️ usar LUZ CLOUD em '{location}'")
+        # -------------------------
+        # LOCAL (WC)
+        # -------------------------
+        if location in self.real_lights:
+            light = self.real_lights[location]
 
             try:
                 if action == "turn_on":
-                    ok = light.ligar()
-                    return f"Luz ligada em {location}." if ok else f"Não consegui ligar a luz em {location}."
+                    self._run_async(
+                        lambda: self._ligar_local(light),
+                        f"ligar luz local {location}",
+                    )
+                    return f"A ligar a luz em {location}."
 
                 if action == "turn_off":
-                    ok = light.desligar()
-                    return f"Luz desligada em {location}." if ok else f"Não consegui desligar a luz em {location}."
+                    self._run_async(
+                        lambda: self._desligar_local(light),
+                        f"desligar luz local {location}",
+                    )
+                    return f"A desligar a luz em {location}."
+
             except Exception as e:
-                log(f"⚠️ Erro na luz cloud '{location}': {e}")
-                return f"Não consegui controlar a luz em {location}."
+                log(f"❌ Erro luz local: {e}")
+                return "Erro a controlar luz."
 
             return "Não percebi o comando para a luz."
 
-        log(f"🧪 fallback simulador para '{location}'")
-        return self.simulator.controlar_luz(location=location, action=action)
+        # -------------------------
+        # CLOUD (QUARTO)
+        # -------------------------
+        if location in self.cloud_lights:
+            light = self.cloud_lights[location]
 
-    # ------------------------------------------------
+            try:
+                if action == "turn_on":
+                    self._run_async(
+                        lambda: light.ligar(),
+                        f"ligar luz cloud {location}",
+                    )
+                    return f"A ligar a luz em {location}."
+
+                if action == "turn_off":
+                    self._run_async(
+                        lambda: light.desligar(),
+                        f"desligar luz cloud {location}",
+                    )
+                    return f"A desligar a luz em {location}."
+
+            except Exception as e:
+                log(f"❌ Erro luz cloud: {e}")
+                return "Erro a controlar luz."
+
+            return "Não percebi o comando para a luz."
+
+        # -------------------------
+        # SIMULADOR
+        # -------------------------
+        if hasattr(self.simulator, "controlar_luz"):
+            return self.simulator.controlar_luz(location=location, action=action)
+
+        return f"A luz em {location} ainda não está configurada."
+
+    # ==================================================
     # BRILHO
-    # ------------------------------------------------
+    # ==================================================
 
     def definir_brilho(self, location=None, brightness=None):
         location = self._normalizar_local(location)
-        log(f"🔆 definir_brilho -> location='{location}' | brightness='{brightness}'")
+
+        if not location:
+            return "Não disseste a divisão."
 
         if brightness is None:
-            return "Não percebi o nível de brilho."
+            return "Não percebi o brilho."
 
         try:
             brightness = int(brightness)
@@ -163,74 +207,81 @@ class HybridSmartHome:
 
         brightness = max(0, min(100, brightness))
 
-        if self._tem_luz_local(location):
+        if location in self.real_lights:
             light = self.real_lights[location]
 
             try:
-                if hasattr(light, "set_brightness"):
-                    ok = light.set_brightness(brightness)
-                else:
-                    ok = light.definir_brilho(brightness)
-
-                return (
-                    f"Luz em {location} ajustada para {brightness}%."
-                    if ok else
-                    f"Não consegui ajustar o brilho da luz em {location}."
+                self._run_async(
+                    lambda: self._set_brilho_local(light, brightness),
+                    f"brilho local {location} -> {brightness}%",
                 )
+                return f"A ajustar o brilho para {brightness}% em {location}."
             except Exception as e:
-                log(f"⚠️ Erro no brilho local '{location}': {e}")
-                return f"Não consegui ajustar o brilho da luz em {location}."
+                log(f"❌ Erro brilho local: {e}")
+                return "Erro a ajustar brilho."
 
-        if self._tem_luz_cloud(location):
+        if location in self.cloud_lights:
             light = self.cloud_lights[location]
 
             try:
-                ok = light.definir_brilho(brightness)
-                return (
-                    f"Luz em {location} ajustada para {brightness}%."
-                    if ok else
-                    f"Não consegui ajustar o brilho da luz em {location}."
+                self._run_async(
+                    lambda: light.definir_brilho(brightness),
+                    f"brilho cloud {location} -> {brightness}%",
                 )
+                return f"A ajustar o brilho para {brightness}% em {location}."
             except Exception as e:
-                log(f"⚠️ Erro no brilho cloud '{location}': {e}")
-                return f"Não consegui ajustar o brilho da luz em {location}."
+                log(f"❌ Erro brilho cloud: {e}")
+                return "Erro a ajustar brilho."
 
-        return self.simulator.definir_brilho(location=location, brightness=brightness)
+        if hasattr(self.simulator, "definir_brilho"):
+            return self.simulator.definir_brilho(location=location, brightness=brightness)
+
+        return f"O brilho da luz em {location} ainda não está configurado."
 
     def controlar_brilho(self, location=None, brightness=None):
         return self.definir_brilho(location=location, brightness=brightness)
 
     def ajustar_brilho_relativo(self, location=None, direction="up"):
         location = self._normalizar_local(location)
-        log(f"🔆 ajustar_brilho_relativo -> location='{location}' | direction='{direction}'")
 
-        if self._tem_luz_local(location):
+        if not location:
+            return "Não disseste a divisão."
+
+        if location in self.real_lights:
             light = self.real_lights[location]
 
             try:
                 if direction == "up":
                     if hasattr(light, "brightness_up"):
-                        ok = light.brightness_up()
-                        return "Brilho aumentado em wc." if ok else "Não consegui aumentar o brilho em wc."
-                    # fallback simples
+                        self._run_async(
+                            lambda: light.brightness_up(),
+                            f"brightness_up local {location}",
+                        )
+                        return f"A aumentar o brilho em {location}."
                     return self.definir_brilho(location=location, brightness=80)
 
                 if hasattr(light, "brightness_down"):
-                    ok = light.brightness_down()
-                    return "Brilho reduzido em wc." if ok else "Não consegui reduzir o brilho em wc."
+                    self._run_async(
+                        lambda: light.brightness_down(),
+                        f"brightness_down local {location}",
+                    )
+                    return f"A reduzir o brilho em {location}."
+
                 return self.definir_brilho(location=location, brightness=40)
 
             except Exception as e:
-                log(f"⚠️ Erro no brilho relativo local '{location}': {e}")
-                return f"Não consegui ajustar o brilho em {location}."
+                log(f"❌ Erro brilho relativo local: {e}")
+                return "Erro a ajustar brilho."
 
-        if self._tem_luz_cloud(location):
-            # fallback simples por percentagens
+        if location in self.cloud_lights:
             if direction == "up":
                 return self.definir_brilho(location=location, brightness=80)
             return self.definir_brilho(location=location, brightness=40)
 
-        return self.simulator.ajustar_brilho_relativo(location=location, direction=direction)
+        if hasattr(self.simulator, "ajustar_brilho_relativo"):
+            return self.simulator.ajustar_brilho_relativo(location=location, direction=direction)
+
+        return f"O brilho da luz em {location} ainda não está configurado."
 
     def aumentar_brilho(self, location=None):
         return self.ajustar_brilho_relativo(location=location, direction="up")
@@ -238,38 +289,49 @@ class HybridSmartHome:
     def diminuir_brilho(self, location=None):
         return self.ajustar_brilho_relativo(location=location, direction="down")
 
-    # ------------------------------------------------
+    # ==================================================
     # TEMPERATURA / COR
-    # ------------------------------------------------
+    # ==================================================
 
     def ajustar_temperatura_luz(self, location=None, mode="warmer"):
         location = self._normalizar_local(location)
-        log(f"🌡️ ajustar_temperatura_luz -> location='{location}' | mode='{mode}'")
 
-        if self._tem_luz_local(location):
+        if not location:
+            return "Não disseste a divisão."
+
+        if location in self.real_lights:
             light = self.real_lights[location]
 
             try:
                 if mode == "warmer":
                     if hasattr(light, "warmer"):
-                        ok = light.warmer()
-                        return "Luz mais quente em wc." if ok is not False else "Não consegui aquecer a luz em wc."
-                    return "A luz do wc não suporta temperatura de cor."
+                        self._run_async(
+                            lambda: light.warmer(),
+                            f"warmer local {location}",
+                        )
+                        return f"A aquecer a luz em {location}."
+                    return f"A luz em {location} não suporta temperatura de cor."
 
                 if hasattr(light, "cooler"):
-                    ok = light.cooler()
-                    return "Luz mais fria em wc." if ok is not False else "Não consegui arrefecer a luz em wc."
-                return "A luz do wc não suporta temperatura de cor."
+                    self._run_async(
+                        lambda: light.cooler(),
+                        f"cooler local {location}",
+                    )
+                    return f"A arrefecer a luz em {location}."
+
+                return f"A luz em {location} não suporta temperatura de cor."
 
             except Exception as e:
-                log(f"⚠️ Erro na temperatura local '{location}': {e}")
-                return f"Não consegui ajustar a temperatura da luz em {location}."
+                log(f"❌ Erro temperatura local: {e}")
+                return "Erro a ajustar temperatura."
 
-        if self._tem_luz_cloud(location):
-            # se a cloud light ainda não tiver suporte, devolve algo limpo
+        if location in self.cloud_lights:
             return f"A luz em {location} ainda não tem controlo de temperatura implementado."
 
-        return self.simulator.ajustar_temperatura_luz(location=location, mode=mode)
+        if hasattr(self.simulator, "ajustar_temperatura_luz"):
+            return self.simulator.ajustar_temperatura_luz(location=location, mode=mode)
+
+        return f"A temperatura da luz em {location} ainda não está configurada."
 
     def luz_mais_quente(self, location=None):
         return self.ajustar_temperatura_luz(location=location, mode="warmer")
@@ -277,94 +339,165 @@ class HybridSmartHome:
     def luz_mais_fria(self, location=None):
         return self.ajustar_temperatura_luz(location=location, mode="cooler")
 
-    # ------------------------------------------------
+    # ==================================================
     # TOMADA
-    # ------------------------------------------------
+    # ==================================================
 
     def controlar_tomada(self, location=None, action="turn_on"):
-        return self.simulator.controlar_tomada(location=location, action=action)
+        location = self._normalizar_local(location)
 
-    # ------------------------------------------------
+        if hasattr(self.simulator, "controlar_tomada"):
+            return self.simulator.controlar_tomada(location=location, action=action)
+
+        if location:
+            return f"A tomada em {location} ainda não está configurada."
+        return "Essa tomada ainda não está configurada."
+
+    # ==================================================
     # TIMER
-    # ------------------------------------------------
+    # ==================================================
 
     def agendar_luz_off(self, location=None, minutes=None):
-        return self.simulator.agendar_luz_off(location=location, minutes=minutes)
+        location = self._normalizar_local(location)
 
-    # ------------------------------------------------
+        if not location:
+            return "Não disseste a divisão."
+
+        if not minutes:
+            return "Não percebi o número de minutos."
+
+        try:
+            minutes = int(minutes)
+        except Exception:
+            return "O número de minutos não é válido."
+
+        if minutes <= 0:
+            return "O número de minutos tem de ser maior que zero."
+
+        if hasattr(self.simulator, "agendar_luz_off"):
+            return self.simulator.agendar_luz_off(location=location, minutes=minutes)
+
+        return f"O temporizador da luz em {location} ainda não está configurado."
+
+    def agendar_desligar_luz(self, location=None, minutes=None):
+        return self.agendar_luz_off(location=location, minutes=minutes)
+
+    # ==================================================
+    # APPLE TV
+    # ==================================================
+
+    def controlar_apple_tv(self, action=None, app_name=None):
+        if not action:
+            return "Não percebi a ação da Apple TV."
+
+        try:
+            return self.apple_tv.executar(action=action, app_name=app_name)
+        except Exception as e:
+            log(f"❌ Erro Apple TV: {e}")
+            return "Erro a controlar a Apple TV."
+
+    # ==================================================
     # CENAS
-    # ------------------------------------------------
+    # ==================================================
 
     def modo_cinema(self, location=None):
-        location = self._default_location(location)
-        log(f"🎬 modo_cinema -> location='{location}'")
+        location = self._normalizar_local(location) or "quarto"
 
-        # comportamento especial do teu setup
         if location == "quarto":
-            ok_wc = True
-            ok_quarto_on = True
-            ok_quarto_brilho = True
+            if "wc" in self.real_lights:
+                self._run_async(
+                    lambda: self._desligar_local(self.real_lights["wc"]),
+                    "modo cinema -> desligar wc",
+                )
 
-            if self._tem_luz_local("wc"):
-                wc = self.real_lights["wc"]
-                try:
-                    if hasattr(wc, "turn_off"):
-                        ok_wc = wc.turn_off()
-                    else:
-                        ok_wc = wc.desligar()
-                except Exception:
-                    ok_wc = False
-                log(f"🎬 modo_cinema -> wc desligar = {ok_wc}")
+            if "quarto" in self.cloud_lights:
+                self._run_async(
+                    lambda: self.cloud_lights["quarto"].ligar(),
+                    "modo cinema -> ligar quarto",
+                )
+                self._run_async(
+                    lambda: self.cloud_lights["quarto"].definir_brilho(20),
+                    "modo cinema -> brilho quarto 20%",
+                )
 
-            if self._tem_luz_cloud("quarto"):
-                quarto = self.cloud_lights["quarto"]
-                try:
-                    ok_quarto_on = quarto.ligar()
-                    ok_quarto_brilho = quarto.definir_brilho(20)
-                except Exception:
-                    ok_quarto_on = False
-                    ok_quarto_brilho = False
-                log(f"🎬 modo_cinema -> quarto ligar = {ok_quarto_on}")
-                log(f"🎬 modo_cinema -> quarto brilho = {ok_quarto_brilho}")
+            return "Modo cinema ativado."
 
-            if ok_wc and ok_quarto_on and ok_quarto_brilho:
-                return "Modo cinema ativado em quarto."
+        if hasattr(self.simulator, "modo_cinema"):
+            return self.simulator.modo_cinema(location)
 
-            return "Ativei parcialmente o modo cinema."
-
-        # fallback genérico
-        self.controlar_luz(location=location, action="turn_on")
-        return self.definir_brilho(location=location, brightness=30)
+        return "Modo cinema não configurado."
 
     def modo_relax(self, location=None):
-        location = self._default_location(location)
-        log(f"😌 modo_relax -> location='{location}'")
-
-        self.controlar_luz(location=location, action="turn_on")
+        location = self._normalizar_local(location) or "quarto"
         return self.definir_brilho(location=location, brightness=40)
 
     def modo_gaming(self, location=None):
-        location = self._default_location(location)
-        log(f"🎮 modo_gaming -> location='{location}'")
-
-        self.controlar_luz(location=location, action="turn_on")
+        location = self._normalizar_local(location) or "quarto"
         return self.definir_brilho(location=location, brightness=70)
 
-    # ------------------------------------------------
+    # ==================================================
     # ESTADO
-    # ------------------------------------------------
+    # ==================================================
+
+    def obter_estado_luz(self, location=None):
+        location = self._normalizar_local(location)
+
+        if location in self.real_lights:
+            return {
+                "location": location,
+                "device": "light",
+                "backend": "tuya_local",
+                "state": "unknown",
+            }
+
+        if location in self.cloud_lights:
+            return {
+                "location": location,
+                "device": "light",
+                "backend": "tuya_cloud",
+                "state": "unknown",
+            }
+
+        if hasattr(self.simulator, "obter_estado_luz"):
+            return self.simulator.obter_estado_luz(location=location)
+
+        return {
+            "location": location,
+            "device": "light",
+            "backend": "unknown",
+            "state": "unknown",
+        }
+
+    def obter_estado_tomada(self, location=None):
+        if hasattr(self.simulator, "obter_estado_tomada"):
+            return self.simulator.obter_estado_tomada(location=location)
+
+        return {
+            "location": location,
+            "device": "plug",
+            "backend": "unknown",
+            "state": "unknown",
+        }
 
     def estado_total(self):
-        data = self.simulator.estado_total()
+        if hasattr(self.simulator, "estado_total"):
+            data = self.simulator.estado_total()
+        else:
+            data = {"luzes": {}, "tomadas": {}}
+
+        if "luzes" not in data:
+            data["luzes"] = {}
+        if "tomadas" not in data:
+            data["tomadas"] = {}
 
         for location in self.real_lights:
-            data["luzes"][location] = {
-                "backend": "tuya_local"
-            }
+            base = data["luzes"].get(location, {})
+            base["backend"] = "tuya_local"
+            data["luzes"][location] = base
 
         for location in self.cloud_lights:
-            data["luzes"][location] = {
-                "backend": "tuya_cloud"
-            }
+            base = data["luzes"].get(location, {})
+            base["backend"] = "tuya_cloud"
+            data["luzes"][location] = base
 
         return data

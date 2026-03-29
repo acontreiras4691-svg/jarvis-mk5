@@ -12,13 +12,13 @@ from config.configuracoes import (
 
 
 class WakeWordEngine:
-
     def __init__(self, audio_manager):
         self.audio_manager = audio_manager
-        self.last_trigger = 0
-        self.cooldown = 1.2
+        self.last_trigger = 0.0
+        self.cooldown = 0.8
+
         self.buffer = np.array([], dtype=np.int16)
-        self.last_debug_log = 0
+        self.last_debug_log = 0.0
 
         if LOG_ATIVO:
             log("🔹 A iniciar WakeWordEngine...")
@@ -29,7 +29,6 @@ class WakeWordEngine:
                 keywords=[WAKEWORD_KEYWORD],
                 sensitivities=[WAKEWORD_SENSIBILIDADE]
             )
-
         except Exception as e:
             log(f"❌ Erro ao inicializar Porcupine: {e}")
             raise
@@ -41,21 +40,14 @@ class WakeWordEngine:
             log("✅ WakeWordEngine pronto.")
             log(f"Keyword: {WAKEWORD_KEYWORD}")
             log(f"Sensibilidade: {WAKEWORD_SENSIBILIDADE}")
-            log(f"Sample rate Porcupine: {self.sample_rate}")
-            log(f"Frame length Porcupine: {self.frame_length}")
-
-    # ==================================================
-    # DETETAR WAKE WORD
-    # ==================================================
+            log(f"Frame length: {self.frame_length}")
+            log(f"Sample rate esperado: {self.sample_rate}")
 
     def detectar(self):
         try:
             data = self.audio_manager.get_latest_chunk()
 
-            if data is None:
-                return False
-
-            if len(data) == 0:
+            if not data:
                 return False
 
             pcm = np.frombuffer(data, dtype=np.int16)
@@ -63,23 +55,27 @@ class WakeWordEngine:
             if pcm.size == 0:
                 return False
 
-            # debug leve de tempos a tempos
+            nivel = float(np.abs(pcm).mean() / 32768.0)
+
             agora_debug = time.time()
-            if LOG_ATIVO and (agora_debug - self.last_debug_log > 5):
-                nivel = float(np.abs(pcm).mean() / 32768.0) if pcm.size > 0 else 0.0
+            if LOG_ATIVO and (agora_debug - self.last_debug_log > 3):
                 log(
                     f"🎙️ Wake debug | samples={pcm.size} | "
                     f"buffer={len(self.buffer)} | nivel={nivel:.4f}"
                 )
                 self.last_debug_log = agora_debug
 
+            # guardar buffer sem cortar demasiado cedo
             self.buffer = np.concatenate((self.buffer, pcm))
+
+            # manter no máximo 4 frames acumulados
+            max_samples = self.frame_length * 4
+            if len(self.buffer) > max_samples:
+                self.buffer = self.buffer[-max_samples:]
 
             while len(self.buffer) >= self.frame_length:
                 frame = self.buffer[:self.frame_length]
                 self.buffer = self.buffer[self.frame_length:]
-
-                frame = np.asarray(frame, dtype=np.int16)
 
                 result = self.porcupine.process(frame)
 
@@ -102,10 +98,6 @@ class WakeWordEngine:
                 log(f"❌ Erro WakeWord: {e}")
 
         return False
-
-    # ==================================================
-    # ENCERRAR
-    # ==================================================
 
     def terminar(self):
         try:

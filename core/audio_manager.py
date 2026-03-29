@@ -9,12 +9,11 @@ from config.configuracoes import (
     MIC_INPUT_INDEX,
     SAMPLE_RATE,
     CHUNK_SIZE,
-    CHANNELS
+    CHANNELS,
 )
 
 
 class AudioManager:
-
     def __init__(self):
         log("🎤 A iniciar AudioManager...")
 
@@ -23,10 +22,13 @@ class AudioManager:
         self.running = False
         self.lock = threading.Lock()
 
-        self.buffer_queue = collections.deque(maxlen=200)
+        # buffer geral para HUD / debug / leituras rápidas
+        self.buffer_queue = collections.deque(maxlen=400)
+
+        # contador para permitir leitura sequencial real
+        self.chunk_counter = 0
 
         self.device_index = self._resolver_dispositivo()
-
         self._abrir_stream()
 
         self.running = True
@@ -34,7 +36,7 @@ class AudioManager:
         self.thread = threading.Thread(
             target=self._capture_loop,
             daemon=True,
-            name="AudioCaptureThread"
+            name="AudioCaptureThread",
         )
         self.thread.start()
 
@@ -88,7 +90,7 @@ class AudioManager:
                 input=True,
                 input_device_index=self.device_index,
                 frames_per_buffer=CHUNK_SIZE,
-                start=True
+                start=True,
             )
         except Exception as e:
             log(f"❌ Erro ao abrir stream de áudio: {e}")
@@ -113,12 +115,13 @@ class AudioManager:
 
                 data = self.stream.read(
                     CHUNK_SIZE,
-                    exception_on_overflow=False
+                    exception_on_overflow=False,
                 )
 
                 if data:
                     with self.lock:
-                        self.buffer_queue.append(data)
+                        self.chunk_counter += 1
+                        self.buffer_queue.append((self.chunk_counter, data))
 
             except Exception as e:
                 log(f"❌ Erro audio: {e}")
@@ -142,7 +145,29 @@ class AudioManager:
         with self.lock:
             if not self.buffer_queue:
                 return None
-            return self.buffer_queue[-1]
+            return self.buffer_queue[-1][1]
+
+    # ==================================================
+    # ÚLTIMO ID DE CHUNK
+    # ==================================================
+
+    def get_latest_chunk_id(self):
+        with self.lock:
+            if not self.buffer_queue:
+                return 0
+            return self.buffer_queue[-1][0]
+
+    # ==================================================
+    # OBTER PRÓXIMO CHUNK APÓS UM ID
+    # ==================================================
+
+    def get_next_chunk_after(self, last_id=0):
+        with self.lock:
+            for chunk_id, chunk_data in self.buffer_queue:
+                if chunk_id > last_id:
+                    return chunk_id, chunk_data
+
+        return None, None
 
     # ==================================================
     # VÁRIOS CHUNKS
@@ -153,7 +178,7 @@ class AudioManager:
             if len(self.buffer_queue) < num_chunks:
                 return None
 
-            frames = list(self.buffer_queue)[-num_chunks:]
+            frames = [data for _, data in list(self.buffer_queue)[-num_chunks:]]
 
         return b"".join(frames)
 
@@ -166,7 +191,7 @@ class AudioManager:
             if not self.buffer_queue:
                 return 0.0
 
-            pcm = np.frombuffer(self.buffer_queue[-1], dtype=np.int16)
+            pcm = np.frombuffer(self.buffer_queue[-1][1], dtype=np.int16)
 
         if len(pcm) == 0:
             return 0.0
@@ -184,11 +209,13 @@ class AudioManager:
         for i in range(self.p.get_device_count()):
             try:
                 info = self.p.get_device_info_by_index(i)
-                dispositivos.append({
-                    "index": i,
-                    "name": info.get("name", ""),
-                    "maxInputChannels": int(info.get("maxInputChannels", 0))
-                })
+                dispositivos.append(
+                    {
+                        "index": i,
+                        "name": info.get("name", ""),
+                        "maxInputChannels": int(info.get("maxInputChannels", 0)),
+                    }
+                )
             except Exception:
                 pass
 
